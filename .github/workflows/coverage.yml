@@ -231,3 +231,28 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy-pages
         uses: actions/deploy-pages@v4
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — PR sentinel
+# A single always-present job that succeeds iff all three tool jobs passed.
+# Add "CI" as the sole required status check in branch protection rules so
+# you don't have to list each tool job individually.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  ci:
+    name: "CI"
+    runs-on: ubuntu-latest
+    needs: [gcov, llvm, opencpp]
+    if: always()
+    steps:
+      - name: All coverage jobs passed
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results"
+          if echo "$results" | grep -q '"result": "failure"'; then
+            echo "One or more coverage jobs failed." && exit 1
+          fi
+          if echo "$results" | grep -q '"result": "cancelled"'; then
+            echo "One or more coverage jobs were cancelled." && exit 1
+          fi
+          echo "All coverage jobs succeeded."

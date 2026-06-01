@@ -24,39 +24,42 @@ import json
 import re
 import sys
 import xml.etree.ElementTree as ET
+from bisect import bisect_right
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+try:
+    import tree_sitter_cpp
+    from tree_sitter import Language, Parser as TSParser
+
+    CPP_LANGUAGE = Language(tree_sitter_cpp.language())
+    TREE_SITTER_AVAILABLE = True
+except ImportError:
+    CPP_LANGUAGE = None
+    TSParser = None
+    TREE_SITTER_AVAILABLE = False
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-ROOT    = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT / "src"
 REPORTS = ROOT / "coverage-reports"
-OUT     = REPORTS / "merged.html"
+OUT = REPORTS / "merged.html"
 
-GCOV_LINES  = REPORTS / "gcov"    / "lines.json"
-LLVM_LINES  = REPORTS / "llvm"    / "lines.json"
+GCOV_LINES = REPORTS / "gcov" / "lines.json"
+LLVM_LINES = REPORTS / "llvm" / "lines.json"
 OPENCPP_XML = REPORTS / "opencpp" / "coverage.xml"
 
 # ── Tool palette ──────────────────────────────────────────────────────────────
 
-# Full registry — entries are only included in TOOLS at runtime when their
-# data files actually exist (see _build_active_tools() below).
 _ALL_TOOLS = ["gcov", "llvm", "opencpp"]
 
 TOOL_LABEL = {"gcov": "GCC", "llvm": "LLVM", "opencpp": "MSVC"}
-# Short tag labels shown inside each pill
-TOOL_TAG   = {"gcov": "gcov", "llvm": "llvm-cov", "opencpp": "occ"}
+TOOL_TAG = {"gcov": "gcov", "llvm": "llvm-cov", "opencpp": "occ"}
 
-# Soft pastel accents — periwinkle / mint / gold.
-# Covered pill = solid accent fill.
-# Missed pill  = same hue at ~22% opacity tint + accent border.
-# Not-tracked  = no pill rendered (absence = not tracked).
-TOOL_COLOR   = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43"}
-# Pre-computed 22%-opacity tints against #FFFFFF background
+TOOL_COLOR = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43"}
 TOOL_MISS_BG = {"gcov": "#EDEEFF", "llvm": "#DDFAF5", "opencpp": "#FFFCD9"}
-TOOL_HIT_FG  = {"gcov": "#1D1D1F", "llvm": "#1D1D1F", "opencpp": "#1D1D1F"}
 
 
 def _build_active_tools() -> list[str]:
@@ -69,24 +72,35 @@ def _build_active_tools() -> list[str]:
     if OPENCPP_XML.exists():
         active.append("opencpp")
     if not active:
-        # No data at all yet — return all so callers can still render empty state
         return list(_ALL_TOOLS)
     return active
 
 
-# TOOLS is set after the path constants are defined (see bottom of section).
-
 # ── Data types ─────────────────────────────────────────────────────────────────
 
-# True = covered, False = instrumented but missed, None = not tracked by tool
 Coverage = Dict[str, Dict[int, Dict[str, Optional[bool]]]]
-
-# TOOLS is populated in main() once we know which data files exist.
 TOOLS: list[str] = []
 
 
 def empty_line_entry() -> Dict[str, Optional[bool]]:
     return {t: None for t in _ALL_TOOLS}
+
+
+def merge_state(a: Optional[bool], b: Optional[bool]) -> Optional[bool]:
+    if a is True or b is True:
+        return True
+    if a is False or b is False:
+        return False
+    return None
+
+
+def line_entry_or_empty(
+    line_data: Optional[Dict[int, Dict[str, Optional[bool]]]],
+    ln: int,
+) -> Dict[str, Optional[bool]]:
+    if not line_data:
+        return empty_line_entry()
+    return line_data.get(ln, empty_line_entry())
 
 
 # ── Path normalisation ────────────────────────────────────────────────────────
@@ -96,7 +110,7 @@ def normalise(path: str) -> str:
     s = path.replace("\\", "/")
     idx = s.find("/src/")
     if idx != -1:
-        return "src/" + s[idx + 5:]
+        return "src/" + s[idx + 5 :]
     p = Path(path)
     try:
         rel = p.resolve().relative_to(ROOT.resolve())
@@ -114,7 +128,7 @@ def parse_gcov(coverage: Coverage) -> None:
     if not GCOV_LINES.exists():
         print(f"[WARN] Not found: {GCOV_LINES}", file=sys.stderr)
         return
-    with open(GCOV_LINES) as f:
+    with open(GCOV_LINES, encoding="utf-8") as f:
         data = json.load(f)
     for file_entry in data.get("files", []):
         key = normalise(file_entry["file"])
@@ -129,7 +143,7 @@ def parse_llvm(coverage: Coverage) -> None:
     if not LLVM_LINES.exists():
         print(f"[WARN] Not found: {LLVM_LINES}", file=sys.stderr)
         return
-    with open(LLVM_LINES) as f:
+    with open(LLVM_LINES, encoding="utf-8") as f:
         data = json.load(f)
     for file_entry in data.get("data", [{}])[0].get("files", []):
         key = normalise(file_entry["filename"])
@@ -143,11 +157,10 @@ def parse_llvm(coverage: Coverage) -> None:
                 current_count = count
                 current_has = True
             if current_has:
-                ln = seg_line
-                if ln not in line_counts:
-                    line_counts[ln] = current_count
+                if seg_line not in line_counts:
+                    line_counts[seg_line] = current_count
                 else:
-                    line_counts[ln] = max(line_counts[ln], current_count)
+                    line_counts[seg_line] = max(line_counts[seg_line], current_count)
         for ln, count in line_counts.items():
             coverage[key].setdefault(ln, empty_line_entry())
             if coverage[key][ln]["llvm"] is None:
@@ -187,37 +200,261 @@ def read_source_files() -> Dict[str, List[str]]:
             rel = "src/" + path.relative_to(SRC_DIR).as_posix()
             try:
                 sources[rel] = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except Exception as e:
-                print(f"[WARN] Cannot read {path}: {e}", file=sys.stderr)
+            except Exception as exc:
+                print(f"[WARN] Cannot read {path}: {exc}", file=sys.stderr)
     return sources
+
+
+# ── Tree-sitter helpers ───────────────────────────────────────────────────────
+
+KEYWORD_NODE_TYPES = {
+    "alignof",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "consteval",
+    "constexpr",
+    "constinit",
+    "continue",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "explicit",
+    "false",
+    "final",
+    "for",
+    "friend",
+    "goto",
+    "if",
+    "inline",
+    "mutable",
+    "namespace",
+    "new",
+    "noexcept",
+    "nullptr",
+    "operator",
+    "override",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "template",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typedef",
+    "typename",
+    "union",
+    "using",
+    "virtual",
+    "while",
+}
+
+KEYWORD_TEXT = {
+    "consteval",
+    "constinit",
+    "decltype",
+    "requires",
+    "thread_local",
+    "volatile",
+}
+
+BUILTIN_TYPE_TEXT = {
+    "auto",
+    "bool",
+    "char",
+    "char8_t",
+    "char16_t",
+    "char32_t",
+    "double",
+    "float",
+    "int",
+    "long",
+    "short",
+    "signed",
+    "size_t",
+    "ssize_t",
+    "unsigned",
+    "void",
+    "wchar_t",
+}
+
+STRING_PARENT_TYPES = {
+    "char_literal",
+    "concatenated_string",
+    "raw_string_literal",
+    "string_literal",
+    "system_lib_string",
+}
+
+
+def new_parser() -> Optional[TSParser]:
+    if not TREE_SITTER_AVAILABLE or CPP_LANGUAGE is None or TSParser is None:
+        return None
+    return TSParser(CPP_LANGUAGE)
+
+
+def walk_tree(node) -> List[object]:
+    nodes = [node]
+    for child in node.children:
+        nodes.extend(walk_tree(child))
+    return nodes
+
+
+def opening_brace_line(body_node) -> Optional[int]:
+    for child in body_node.children:
+        if child.type == "{":
+            return child.start_point[0] + 1
+    return None
+
+
+def find_function_boundaries(source_text: str) -> Dict[int, int]:
+    parser = new_parser()
+    if parser is None:
+        return {}
+
+    tree = parser.parse(source_text.encode("utf-8"))
+    boundaries: Dict[int, int] = {}
+    for node in walk_tree(tree.root_node):
+        if node.type != "function_definition":
+            continue
+        declarator = node.child_by_field_name("declarator")
+        body = node.child_by_field_name("body")
+        if declarator is None or body is None:
+            continue
+        name_line = declarator.start_point[0] + 1
+        brace_line = opening_brace_line(body)
+        if brace_line is None or brace_line <= name_line:
+            continue
+        boundaries[name_line] = max(boundaries.get(name_line, 0), brace_line)
+    return boundaries
+
+
+def classify_leaf(node, text: str) -> Optional[str]:
+    parent_type = node.parent.type if node.parent is not None else ""
+
+    if node.type == "comment":
+        return "tok-cmt"
+    if node.type == "system_lib_string" or parent_type in STRING_PARENT_TYPES:
+        return "tok-str"
+    if node.type == "number_literal":
+        return "tok-num"
+    if node.type in {"primitive_type", "type_identifier"}:
+        return "tok-type"
+    if node.type.startswith("preproc") or node.type.startswith("#") or parent_type.startswith("preproc"):
+        return "tok-pre"
+    if node.type in KEYWORD_NODE_TYPES or text in KEYWORD_TEXT:
+        return "tok-kw"
+    if text in BUILTIN_TYPE_TEXT:
+        return "tok-type"
+    return None
+
+
+def byte_to_char_index(source_text: str, byte_index: int) -> int:
+    byte_offsets = [0]
+    total = 0
+    for ch in source_text:
+        total += len(ch.encode("utf-8"))
+        byte_offsets.append(total)
+    return bisect_right(byte_offsets, byte_index) - 1
+
+
+def render_plain_source(line: str) -> str:
+    return html.escape(line, quote=False)
+
+
+def render_highlighted_lines(source_lines: List[str]) -> List[str]:
+    parser = new_parser()
+    if parser is None:
+        return [render_plain_source(line) for line in source_lines]
+
+    source_text = "\n".join(source_lines)
+    source_bytes = source_text.encode("utf-8")
+    tree = parser.parse(source_bytes)
+
+    char_spans: List[Tuple[int, int, Optional[str]]] = []
+    for node in walk_tree(tree.root_node):
+        if node.children:
+            continue
+        token_text = source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+        token_class = classify_leaf(node, token_text)
+        if token_class is None:
+            continue
+        start_char = byte_to_char_index(source_text, node.start_byte)
+        end_char = byte_to_char_index(source_text, node.end_byte)
+        char_spans.append((start_char, end_char, token_class))
+
+    line_starts: List[int] = []
+    offset = 0
+    for line in source_lines:
+        line_starts.append(offset)
+        offset += len(line) + 1
+
+    per_line_spans: List[List[Tuple[int, int, Optional[str]]]] = [[] for _ in source_lines]
+    for start_char, end_char, token_class in char_spans:
+        current = start_char
+        while current < end_char and source_lines:
+            line_idx = bisect_right(line_starts, current) - 1
+            line_start = line_starts[line_idx]
+            line_end = line_start + len(source_lines[line_idx])
+            seg_end = min(end_char, line_end)
+            if seg_end > current:
+                per_line_spans[line_idx].append((current - line_start, seg_end - line_start, token_class))
+            current = seg_end
+            if current == line_end:
+                current += 1
+
+    rendered: List[str] = []
+    for line, spans in zip(source_lines, per_line_spans):
+        if not spans:
+            rendered.append(render_plain_source(line))
+            continue
+        parts: List[str] = []
+        cursor = 0
+        for start_col, end_col, token_class in sorted(spans):
+            if start_col > cursor:
+                parts.append(html.escape(line[cursor:start_col], quote=False))
+            token_html = html.escape(line[start_col:end_col], quote=False)
+            parts.append(f'<span class="{token_class}">{token_html}</span>')
+            cursor = end_col
+        if cursor < len(line):
+            parts.append(html.escape(line[cursor:], quote=False))
+        rendered.append("".join(parts))
+    return rendered
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 def file_merged_stats(line_data: Dict[int, Dict[str, Optional[bool]]]) -> Tuple[int, int]:
-    covered = sum(1 for ld in line_data.values() if any(v is True  for v in ld.values()))
-    total   = sum(1 for ld in line_data.values() if any(v is not None for v in ld.values()))
+    covered = sum(1 for ld in line_data.values() if any(v is True for v in ld.values()))
+    total = sum(1 for ld in line_data.values() if any(v is not None for v in ld.values()))
     return covered, total
 
 
 # ── HTML row builder ──────────────────────────────────────────────────────────
 
-def tags_cell(line_data: Optional[Dict[str, Optional[bool]]]) -> str:
-    """One <td> per tool so each tool's pill occupies a fixed column.
-
-    Covered  → solid accent fill  + dark text label
-    Missed   → ghost pill (light tint bg + accent border + accent text)
-    Not tracked → empty cell (absence communicates "tool doesn't know")
-    """
+def tags_cell(line_data: Optional[Dict[str, Optional[bool]]], rowspan: Optional[int] = None) -> str:
     if line_data is None:
         ld = {t: None for t in TOOLS}
     else:
         ld = line_data
 
+    rowspan_attr = f' rowspan="{rowspan}"' if rowspan and rowspan > 1 else ""
+    extra_class = " tag-cell-merged" if rowspan and rowspan > 1 else ""
+
     cells = []
     for t in TOOLS:
         state = ld[t]
-        tag   = TOOL_TAG[t]
+        tag = TOOL_TAG[t]
         color = TOOL_COLOR[t]
         if state is True:
             pill = (
@@ -232,16 +469,23 @@ def tags_cell(line_data: Optional[Dict[str, Optional[bool]]]) -> str:
                 f'title="{TOOL_LABEL[t]}: not covered">{tag}</span>'
             )
         else:
-            pill = ""  # not tracked → empty cell
-        cells.append(f'<td class="tag-cell tag-cell-{t}">{pill}</td>')
+            pill = ""
+        cells.append(f'<td class="tag-cell tag-cell-{t}{extra_class}"{rowspan_attr}>{pill}</td>')
 
     return "".join(cells)
 
 
-def source_row(ln: int, src_line: str, line_data: Optional[Dict[str, Optional[bool]]]) -> str:
+def source_row(
+    ln: int,
+    src_html: str,
+    line_data: Optional[Dict[str, Optional[bool]]],
+    *,
+    rowspan: Optional[int] = None,
+    hide_tags: bool = False,
+) -> str:
     ld = line_data or {t: None for t in TOOLS}
 
-    any_hit  = any(v is True  for v in ld.values())
+    any_hit = any(v is True for v in ld.values())
     any_miss = any(v is False for v in ld.values())
 
     if any_hit:
@@ -251,37 +495,46 @@ def source_row(ln: int, src_line: str, line_data: Optional[Dict[str, Optional[bo
     else:
         row_class = "row-plain"
 
-    src_escaped = html.escape(src_line.rstrip("\n"), quote=False)
-    leading = len(src_escaped) - len(src_escaped.lstrip())
-    if leading:
-        src_escaped = "\u00a0" * leading + src_escaped[leading:]
-
+    tags_html = "" if hide_tags else tags_cell(ld, rowspan=rowspan)
     return (
         f'<tr class="{row_class}">'
-        + tags_cell(ld)
+        + tags_html
         + f'<td class="ln">{ln}</td>'
-        + f'<td class="src"><code>{src_escaped}</code></td>'
+        + f'<td class="src"><code>{src_html}</code></td>'
         + "</tr>"
     )
 
 
 # ── Per-file HTML block ───────────────────────────────────────────────────────
 
+def merged_span_data(
+    line_data: Dict[int, Dict[str, Optional[bool]]],
+    start_ln: int,
+    end_ln: int,
+) -> Dict[str, Optional[bool]]:
+    combined = empty_line_entry()
+    for ln in range(start_ln, end_ln + 1):
+        current = line_data.get(ln)
+        if current is None:
+            continue
+        for tool in _ALL_TOOLS:
+            combined[tool] = merge_state(combined[tool], current.get(tool))
+    return combined
+
+
 def file_block(rel_path: str, source_lines: List[str], line_data: Dict[int, Dict[str, Optional[bool]]]) -> str:
     covered, total = file_merged_stats(line_data)
     pct = (covered / total * 100) if total else 0.0
     file_id = "f_" + re.sub(r"[^a-zA-Z0-9]", "_", rel_path)
 
-    # Pill badges per tool
     tool_badges = []
     for t in TOOLS:
-        hits   = sum(1 for ld in line_data.values() if ld.get(t) is True)
+        hits = sum(1 for ld in line_data.values() if ld.get(t) is True)
         missed = sum(1 for ld in line_data.values() if ld.get(t) is False)
-        color  = TOOL_COLOR[t]
+        color = TOOL_COLOR[t]
         if hits + missed == 0:
             tool_badges.append(
-                f'<span class="badge badge-na">'
-                f'{TOOL_LABEL[t]} <span class="badge-val">—</span></span>'
+                f'<span class="badge badge-na">{TOOL_LABEL[t]} <span class="badge-val">—</span></span>'
             )
         else:
             p = hits / (hits + missed) * 100
@@ -291,15 +544,31 @@ def file_block(rel_path: str, source_lines: List[str], line_data: Dict[int, Dict
             )
     badges_html = "".join(tool_badges)
 
-    header_tags = "".join(
-        f'<th class="th-tag th-tag-{t}">{TOOL_TAG[t]}</th>'
-        for t in TOOLS
-    )
+    header_tags = "".join(f'<th class="th-tag th-tag-{t}">{TOOL_TAG[t]}</th>' for t in TOOLS)
+
+    boundaries = find_function_boundaries("\n".join(source_lines)) if source_lines else {}
+    highlighted_lines = render_highlighted_lines(source_lines)
+
+    merge_heads: Dict[int, Tuple[int, Dict[str, Optional[bool]]]] = {}
+    merged_lines: set[int] = set()
+    for name_ln, brace_ln in boundaries.items():
+        if brace_ln > len(source_lines):
+            continue
+        merge_heads[name_ln] = (brace_ln - name_ln + 1, merged_span_data(line_data, name_ln, brace_ln))
+        for ln in range(name_ln + 1, brace_ln + 1):
+            merged_lines.add(ln)
 
     rows = []
     for i, src_line in enumerate(source_lines):
         ln = i + 1
-        rows.append(source_row(ln, src_line, line_data.get(ln)))
+        src_html = highlighted_lines[i] if i < len(highlighted_lines) else render_plain_source(src_line)
+        if ln in merge_heads:
+            rowspan, combined = merge_heads[ln]
+            rows.append(source_row(ln, src_html, combined, rowspan=rowspan))
+        elif ln in merged_lines:
+            rows.append(source_row(ln, src_html, line_entry_or_empty(line_data, ln), hide_tags=True))
+        else:
+            rows.append(source_row(ln, src_html, line_entry_or_empty(line_data, ln)))
 
     return f"""<div class="file-panel" id="{file_id}">
   <div class="file-header">
@@ -321,7 +590,7 @@ def file_block(rel_path: str, source_lines: List[str], line_data: Dict[int, Dict
         <th class="th-src">Source</th>
       </tr>
     </thead>
-    <tbody>{"".join(rows)}</tbody>
+    <tbody>{''.join(rows)}</tbody>
   </table>
   </div>
 </div>"""
@@ -452,9 +721,7 @@ body {
   flex-direction: column;
   height: 100%;
 }
-.file-panel.visible {
-  display: flex;
-}
+.file-panel.visible { display: flex; }
 
 /* ── File header ── */
 .file-header {
@@ -531,8 +798,6 @@ body {
   top: 0;
   z-index: 5;
 }
-/* Column widths: tags fixed, line-number fixed, source fills the rest */
-.th-tags { text-align: left; width: 178px; white-space: nowrap; padding-left: .6rem !important; }
 .th-ln  { text-align: right; width: 3.2rem; color: #86868B; padding-right: .6rem !important; }
 .th-src { text-align: left; padding-left: .5rem !important; }
 
@@ -550,10 +815,10 @@ body {
   letter-spacing: .06em;
   color: #86868B;
 }
-/* Per-tool tag column widths — overridden dynamically from Python */
 .th-tag-gcov,    .tag-cell-gcov    { width: 56px;  border-right: none; }
 .th-tag-llvm,    .tag-cell-llvm    { width: 74px;  border-right: none; }
 .th-tag-opencpp, .tag-cell-opencpp { width: 50px;  border-right: 1px solid #E5E5EA; }
+.tag-cell-merged { vertical-align: top; padding-top: .08rem !important; }
 
 /* ── Table rows ── */
 .src-table td { padding: .08rem .25rem; vertical-align: middle; height: 1.6rem; }
@@ -575,7 +840,6 @@ body {
   vertical-align: middle;
 }
 .tag-hit  { color: #1D1D1F; }
-.tag-miss { /* border-color and bg set inline */ }
 
 /* ── Line number ── */
 .ln {
@@ -592,6 +856,12 @@ body {
 /* ── Source code ── */
 .src { padding-left: .6rem !important; }
 .src code { white-space: pre; color: #1D1D1F; }
+.tok-kw { color: #AD3DA4; }
+.tok-type { color: #0F68A0; }
+.tok-str { color: #C41A16; }
+.tok-num { color: #1C00CF; }
+.tok-cmt { color: #5C6E74; font-style: italic; }
+.tok-pre { color: #643820; }
 
 /* ── Empty state ── */
 .empty-state {
@@ -611,24 +881,19 @@ body {
 
 JS = """
 function showFile(id) {
-  // Hide all panels, show selected
   document.querySelectorAll('.file-panel').forEach(p => p.classList.remove('visible'));
   var panel = document.getElementById(id);
   if (panel) {
     panel.classList.add('visible');
-    // Scroll table back to top
     var scroll = panel.querySelector('.table-scroll');
     if (scroll) scroll.scrollTop = 0;
   }
-  // Update sidebar active state
   document.querySelectorAll('.sidebar-list a').forEach(a => {
     a.classList.toggle('active', a.dataset.target === id);
   });
-  // Persist selection
   try { sessionStorage.setItem('mergedFile', id); } catch(e) {}
 }
 
-// On load: restore last selection or show first file
 (function() {
   var links = document.querySelectorAll('.sidebar-list a');
   if (!links.length) return;
@@ -641,16 +906,12 @@ function showFile(id) {
 
 
 def _tool_col_css(tools: list[str]) -> str:
-    """Generate .th-tag-X / .tag-cell-X width rules for only the active tools."""
-    # widths per tool — last active tool gets the separator border
     widths = {"gcov": 56, "llvm": 74, "opencpp": 50}
     rules = []
-    for i, t in enumerate(tools):
-        w = widths.get(t, 60)
+    for i, tool in enumerate(tools):
+        width = widths.get(tool, 60)
         border = "border-right: 1px solid #E5E5EA;" if i == len(tools) - 1 else "border-right: none;"
-        rules.append(
-            f".th-tag-{t}, .tag-cell-{t} {{ width: {w}px; {border} }}"
-        )
+        rules.append(f".th-tag-{tool}, .tag-cell-{tool} {{ width: {width}px; {border} }}")
     return "\n".join(rules)
 
 
@@ -659,12 +920,11 @@ def _tool_col_css(tools: list[str]) -> str:
 def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[str]) -> str:
     all_files = sorted(set(sources.keys()) | set(coverage.keys()))
 
-    # Sidebar
     sidebar_items = []
     for rel in all_files:
         ld = coverage.get(rel, {})
         covered, total = file_merged_stats(ld)
-        pct_str = f"{covered/total*100:.0f}%" if total else "—"
+        pct_str = f"{covered / total * 100:.0f}%" if total else "—"
         file_id = "f_" + re.sub(r"[^a-zA-Z0-9]", "_", rel)
         short = Path(rel).name
         sidebar_items.append(
@@ -675,18 +935,14 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[st
             f'</a></li>'
         )
 
-    # File panels
     panels = []
     for rel in all_files:
-        src_lines = sources.get(rel, [])
-        ld = coverage.get(rel, {})
-        panels.append(file_block(rel, src_lines, ld))
+        panels.append(file_block(rel, sources.get(rel, []), coverage.get(rel, {})))
 
-    # Legend — show actual tag pills as examples
     legend_parts = []
-    for t in TOOLS:
-        color = TOOL_COLOR[t]
-        tag   = TOOL_TAG[t]
+    for tool in TOOLS:
+        color = TOOL_COLOR[tool]
+        tag = TOOL_TAG[tool]
         legend_parts.append(
             f'<span class="legend-item">'
             f'<span class="tag tag-hit" style="background:{color};border-color:{color};">{tag}</span>'
@@ -695,7 +951,7 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[st
         )
         legend_parts.append(
             f'<span class="legend-item">'
-            f'<span class="tag tag-miss" style="background:{TOOL_MISS_BG[t]};border-color:{color};color:{color};">{tag}</span>'
+            f'<span class="tag tag-miss" style="background:{TOOL_MISS_BG[tool]};border-color:{color};color:{color};">{tag}</span>'
             f'not covered'
             f'</span>'
         )
@@ -708,8 +964,6 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[st
 
     tool_names = " / ".join(TOOL_LABEL[t] for t in tools)
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    # Dynamic tool CSS overrides
     tool_col_css = _tool_col_css(tools)
 
     return f"""<!DOCTYPE html>
@@ -731,7 +985,7 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[st
 </div>
 
 <div class="legend">
-  {"".join(legend_parts)}
+  {''.join(legend_parts)}
 </div>
 
 <div class="layout">
@@ -739,12 +993,12 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[st
   <nav class="sidebar">
     <div class="sidebar-header">Source files</div>
     <ul class="sidebar-list">
-      {"".join(sidebar_items)}
+      {''.join(sidebar_items)}
     </ul>
   </nav>
 
   <main class="main">
-    {"".join(panels)}
+    {''.join(panels)}
     <div class="empty-state" id="empty-state" style="display:none;">
       <span>No file selected</span>
       <span class="hint">Click a file in the sidebar to view coverage</span>
@@ -775,6 +1029,9 @@ def main() -> int:
     if not coverage and not sources:
         print("[ERROR] No coverage data and no source files found.", file=sys.stderr)
         return 1
+
+    if not TREE_SITTER_AVAILABLE:
+        print("[WARN] tree-sitter not installed; syntax highlighting and function-span merging disabled.", file=sys.stderr)
 
     page = build_page(sources, coverage, TOOLS)
     REPORTS.mkdir(parents=True, exist_ok=True)

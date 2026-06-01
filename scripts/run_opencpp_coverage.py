@@ -41,6 +41,14 @@ if SYSTEM != "Windows":
           f"Skipped on {SYSTEM}.")
     sys.exit(0)
 
+# ── Ensure stdout can handle Unicode box-drawing characters on Windows ────────
+# The default Windows console encoding (cp1252) cannot encode U+2500 (─).
+# Reconfigure stdout/stderr to UTF-8 so banner() works in any terminal.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 REPORT_DIR = ROOT / "coverage-reports" / "opencpp"

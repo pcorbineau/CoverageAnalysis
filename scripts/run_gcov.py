@@ -64,8 +64,11 @@ def cpu_count() -> int:
 
 def find_gcc() -> str:
     """
-    Return the GCC binary to use.
-    On macOS, prefers Homebrew gcc-N over Apple's 'g++' alias.
+    Return the GCC C++ binary to use.
+    - macOS: prefers the highest Homebrew g++-N over Apple's 'g++' shim.
+    - Linux: prefers g++-14 → g++-13 → g++ to avoid GCC 13 C++23/<cmath> bugs
+             (GCC 13 generates calls to nextafterf16/__builtin_nextafterf16b
+              which are absent from its own runtime; fixed in GCC 14).
     """
     if SYSTEM == "Darwin":
         brew = shutil.which("brew")
@@ -73,12 +76,16 @@ def find_gcc() -> str:
             try:
                 prefix = subprocess.check_output([brew, "--prefix"], text=True).strip()
                 bin_dir = Path(prefix) / "bin"
-                # Look for g++-N (the C++ compiler), not gcc-N (the C compiler)
                 versioned = sorted(bin_dir.glob("g++-[0-9]*"), reverse=True)
                 if versioned:
                     return str(versioned[0])
             except subprocess.CalledProcessError:
                 pass
+    elif SYSTEM == "Linux":
+        for ver in ("14", "13"):
+            binary = shutil.which(f"g++-{ver}")
+            if binary:
+                return binary
     return "g++"
 
 def find_gcovr() -> str:

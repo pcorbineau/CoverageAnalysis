@@ -62,7 +62,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            g++ gcc cmake ninja-build
+            g++-14 gcc-14 cmake ninja-build
 
       # ── Set up project venv + gcovr (if not restored from cache) ─────────
       - name: Set up project venv (gcovr)

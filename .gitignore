@@ -1,0 +1,5 @@
+/build-clang
+/build-gcc
+/build-msvc
+/build-ninja
+/coverage-reports

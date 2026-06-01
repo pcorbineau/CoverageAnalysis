@@ -249,25 +249,49 @@ def step_collect(codecov_bin: str, test_exe: Path) -> Path:
     return coverage_xml
 
 
-def write_summary(coverage_xml: Path) -> None:
-    root = ET.parse(coverage_xml).getroot()
-    line_rate = float(root.attrib.get("line-rate", "0"))
-    branch_rate = float(root.attrib.get("branch-rate", "0"))
-    lines_valid = int(root.attrib.get("lines-valid", "0"))
-    lines_covered = int(root.attrib.get("lines-covered", "0"))
-    branches_valid = int(root.attrib.get("branches-valid", "0"))
-    branches_covered = int(root.attrib.get("branches-covered", "0"))
+def _is_test_file(filename: str) -> bool:
+    """Return True if the filename does NOT belong to project source (src/)."""
+    normalised = filename.replace("\\", "/").lower()
+    return "/src/" not in normalised
 
+
+def write_summary(coverage_xml: Path) -> None:
+    import re
+    root = ET.parse(coverage_xml).getroot()
+
+    lines_valid = 0
+    lines_covered = 0
+    branches_valid = 0
+    branches_covered = 0
     functions_total = 0
     functions_covered = 0
+
     for cls in root.iter("class"):
-        methods = cls.find("methods")
-        if methods is None:
+        if _is_test_file(cls.attrib.get("filename", "")):
             continue
-        for method in methods.findall("method"):
-            functions_total += 1
-            if float(method.attrib.get("line-rate", "0")) > 0.0:
-                functions_covered += 1
+
+        lines_el = cls.find("lines")
+        if lines_el is not None:
+            for line_el in lines_el:
+                lines_valid += 1
+                if int(line_el.attrib.get("hits", 0)) > 0:
+                    lines_covered += 1
+                branch_str = line_el.attrib.get("condition-coverage", "")
+                if branch_str:
+                    m = re.search(r"\((\d+)/(\d+)\)", branch_str)
+                    if m:
+                        branches_covered += int(m.group(1))
+                        branches_valid += int(m.group(2))
+
+        methods = cls.find("methods")
+        if methods is not None:
+            for method in methods.findall("method"):
+                functions_total += 1
+                if float(method.attrib.get("line-rate", "0")) > 0.0:
+                    functions_covered += 1
+
+    line_rate = (lines_covered / lines_valid) if lines_valid else 0.0
+    branch_rate = (branches_covered / branches_valid) if branches_valid else 0.0
 
     summary = {
         "line_total": lines_valid,

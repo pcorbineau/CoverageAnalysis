@@ -177,37 +177,39 @@ def file_merged_stats(line_data: Dict[int, Dict[str, Optional[bool]]]) -> Tuple[
 # ── HTML row builder ──────────────────────────────────────────────────────────
 
 def tags_cell(line_data: Optional[Dict[str, Optional[bool]]]) -> str:
-    """Single <td> holding one pill per tool that has an opinion on this line.
+    """One <td> per tool so each tool's pill occupies a fixed column.
 
     Covered  → solid accent fill  + dark text label
     Missed   → ghost pill (light tint bg + accent border + accent text)
-    Not tracked → no pill rendered (absence communicates "tool doesn't know")
+    Not tracked → empty cell (absence communicates "tool doesn't know")
     """
     if line_data is None:
         ld = {t: None for t in TOOLS}
     else:
         ld = line_data
 
-    pills = []
+    cells = []
     for t in TOOLS:
         state = ld[t]
         tag   = TOOL_TAG[t]
         color = TOOL_COLOR[t]
         if state is True:
-            pills.append(
+            pill = (
                 f'<span class="tag tag-hit" '
                 f'style="background:{color};border-color:{color};" '
                 f'title="{TOOL_LABEL[t]}: covered">{tag}</span>'
             )
         elif state is False:
-            pills.append(
+            pill = (
                 f'<span class="tag tag-miss" '
                 f'style="background:{TOOL_MISS_BG[t]};border-color:{color};color:{color};" '
                 f'title="{TOOL_LABEL[t]}: not covered">{tag}</span>'
             )
-        # None → nothing rendered
+        else:
+            pill = ""  # not tracked → empty cell
+        cells.append(f'<td class="tag-cell tag-cell-{t}">{pill}</td>')
 
-    return '<td class="tags-cell">' + "".join(pills) + "</td>"
+    return "".join(cells)
 
 
 def source_row(ln: int, src_line: str, line_data: Optional[Dict[str, Optional[bool]]]) -> str:
@@ -263,7 +265,10 @@ def file_block(rel_path: str, source_lines: List[str], line_data: Dict[int, Dict
             )
     badges_html = "".join(tool_badges)
 
-    header_tags = '<th class="th-tags">Coverage</th>'
+    header_tags = "".join(
+        f'<th class="th-tag th-tag-{t}">{TOOL_TAG[t]}</th>'
+        for t in TOOLS
+    )
 
     rows = []
     for i, src_line in enumerate(source_lines):
@@ -483,6 +488,7 @@ body {
 .src-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
   font-size: .8rem;
   background: #FFFFFF;
@@ -499,25 +505,35 @@ body {
   top: 0;
   z-index: 5;
 }
-.th-tags { text-align: left; white-space: nowrap; padding-left: .6rem !important; }
+/* Column widths: tags fixed, line-number fixed, source fills the rest */
+.th-tags { text-align: left; width: 178px; white-space: nowrap; padding-left: .6rem !important; }
 .th-ln  { text-align: right; width: 3.2rem; color: #86868B; padding-right: .6rem !important; }
 .th-src { text-align: left; padding-left: .5rem !important; }
 
+/* Per-tool tag column widths */
+.th-tag, .tag-cell {
+  text-align: center;
+  padding: 0 .25rem !important;
+  vertical-align: middle;
+  height: 1.6rem;
+}
+.th-tag {
+  font-size: .65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #86868B;
+}
+.th-tag-gcov,    .tag-cell-gcov    { width: 56px;  border-right: none; }
+.th-tag-llvm,    .tag-cell-llvm    { width: 74px;  border-right: none; }
+.th-tag-opencpp, .tag-cell-opencpp { width: 50px;  border-right: 1px solid #E5E5EA; }
+
 /* ── Table rows ── */
-.src-table td { padding: .08rem .25rem; vertical-align: top; }
+.src-table td { padding: .08rem .25rem; vertical-align: middle; height: 1.6rem; }
 .row-plain td { background: #FFFFFF; }
 .row-hit   td { background: #F0F7FF; }
 .row-miss  td { background: #FFF8F0; }
 .src-table tbody tr:hover td { background: #EEF4FB !important; }
-
-/* ── Tags cell (left of line number) ── */
-.tags-cell {
-  /* Let the column size itself — no fixed width, just don't wrap */
-  white-space: nowrap;
-  padding: .08rem .5rem !important;
-  vertical-align: top;
-  border-right: 1px solid #E5E5EA;
-}
 .tag {
   display: inline-block;
   padding: .1rem .38rem;
@@ -529,6 +545,7 @@ body {
   margin-right: .22rem;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   line-height: 1.4;
+  vertical-align: middle;
 }
 .tag-hit  { color: #1D1D1F; }
 .tag-miss { /* border-color and bg set inline */ }
@@ -540,9 +557,9 @@ body {
   user-select: none;
   padding-right: .7rem !important;
   padding-left: .3rem !important;
-  min-width: 2.8rem;
+  width: 3.2rem;
   border-right: 1px solid #E5E5EA;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 /* ── Source code ── */

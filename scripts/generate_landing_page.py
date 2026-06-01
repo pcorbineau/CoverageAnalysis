@@ -32,10 +32,12 @@ VENV_DIR     = ROOT / ".coverage-venv"
 OPENCPP_XML  = REPORTS / "opencpp"  / "coverage.xml"
 GCOV_JSON    = REPORTS / "gcov"     / "summary.json"
 LLVM_JSON    = REPORTS / "llvm"     / "summary.json"
+MICROSOFT_JSON = REPORTS / "microsoft" / "summary.json"
 
 OPENCPP_HREF = "opencpp/index.html"
 GCOV_HREF    = "gcov/index.html"
 LLVM_HREF    = "llvm/html/index.html"
+MICROSOFT_HREF = "microsoft/index.html"
 
 
 def venv_python() -> Optional[Path]:
@@ -51,7 +53,7 @@ def venv_python() -> Optional[Path]:
 class ToolResult:
     name:         str
     href:         str
-    css_class:    str                  # "opencpp" | "gcov" | "llvm"
+    css_class:    str                  # "opencpp" | "gcov" | "llvm" | "microsoft"
     accent:       str                  # accent colour hex
     line_pct:     Optional[float] = None
     branch_pct:   Optional[float] = None
@@ -118,6 +120,29 @@ def parse_llvm(path: Path) -> ToolResult:
         accent="#54DFCB",
         notes="Line + branch + function + region coverage via source-based instrumentation. "
               "Most granular: can show per-instantiation template coverage.",
+    )
+    if not path.exists():
+        print(f"[INFO] Not found (skipped): {path}")
+        return result
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        result.line_pct     = round(data.get("line_percent",     0.0), 1)
+        result.branch_pct   = round(data.get("branch_percent",   0.0), 1)
+        result.function_pct = round(data.get("function_percent", 0.0), 1)
+        result.available    = True
+    except Exception as exc:
+        print(f"[WARN] Could not parse {path}: {exc}")
+    return result
+
+
+def parse_microsoft(path: Path) -> ToolResult:
+    result = ToolResult(
+        name="Microsoft Code Coverage",
+        href=MICROSOFT_HREF,
+        css_class="microsoft",
+        accent="#5A8CFF",
+        notes="Line + branch + function coverage for native C++ via Microsoft.CodeCoverage.Console and Cobertura export.",
     )
     if not path.exists():
         print(f"[INFO] Not found (skipped): {path}")
@@ -285,9 +310,10 @@ HTML_TEMPLATE = """\
       box-shadow: 0 2px 12px rgba(0,0,0,.08);
       border-top: 4px solid;
     }}
-    .card.opencpp {{ border-color: #FEDF43; }}
-    .card.gcov     {{ border-color: #A7AAFF; }}
-    .card.llvm     {{ border-color: #54DFCB; }}
+    .card.opencpp   {{ border-color: #FEDF43; }}
+    .card.gcov      {{ border-color: #A7AAFF; }}
+    .card.llvm      {{ border-color: #54DFCB; }}
+    .card.microsoft {{ border-color: #5A8CFF; }}
     .card h3 {{ margin: 0 0 .5rem; font-size: .95rem; color: #1D1D1F; }}
     .card p  {{ margin: 0; font-size: .82rem; color: #6E6E73; line-height: 1.55; }}
     .card a  {{
@@ -299,9 +325,10 @@ HTML_TEMPLATE = """\
       font-size: .82rem;
       font-weight: 600;
     }}
-    .card.opencpp a {{ background: #FEDF43; color: #1D1D1F; }}
-    .card.gcov     a {{ background: #A7AAFF; color: #1D1D1F; }}
-    .card.llvm     a {{ background: #54DFCB; color: #1D1D1F; }}
+    .card.opencpp a   {{ background: #FEDF43; color: #1D1D1F; }}
+    .card.gcov a      {{ background: #A7AAFF; color: #1D1D1F; }}
+    .card.llvm a      {{ background: #54DFCB; color: #1D1D1F; }}
+    .card.microsoft a {{ background: #5A8CFF; color: #FFFFFF; }}
     .card a.disabled {{
       background: #E5E5EA;
       color: #AEAEB2;
@@ -398,8 +425,9 @@ def main() -> int:
     opencpp = parse_opencpp(OPENCPP_XML)
     gcov    = parse_gcov(GCOV_JSON)
     llvm    = parse_llvm(LLVM_JSON)
+    microsoft = parse_microsoft(MICROSOFT_JSON)
 
-    all_tools = [opencpp, gcov, llvm]
+    all_tools = [opencpp, gcov, llvm, microsoft]
 
     # Only include available tools in the table and cards
     available = [t for t in all_tools if t.available]

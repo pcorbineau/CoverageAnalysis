@@ -448,6 +448,38 @@ def check_opencpp(r: CheckResult) -> None:
         r.need("OpenCppCoverage  (choco install opencppcoverage)", lambda: choco_install("opencppcoverage"))
 
 
+def check_microsoft_coverage(r: CheckResult) -> None:
+    if SYSTEM != "Windows":
+        info("Microsoft Code Coverage — Windows only, skipped on this platform")
+        return
+
+    program_files = [
+        Path(os.environ.get("ProgramFiles(x86)", "")),
+        Path(os.environ.get("ProgramFiles", "")),
+    ]
+    for root in program_files:
+        if not root:
+            continue
+        matches = sorted(
+            root.glob("Microsoft Visual Studio/*/*/Common7/IDE/Extensions/Microsoft/CodeCoverage.Console/Microsoft.CodeCoverage.Console.exe"),
+            reverse=True,
+        )
+        if matches:
+            ok("Microsoft coverage", str(matches[0]))
+            return
+
+    if shutil.which("Microsoft.CodeCoverage.Console"):
+        ok("Microsoft coverage", "found on PATH")
+        return
+
+    err("Microsoft coverage", "NOT FOUND")
+    r.error()
+    r.need(
+        "Visual Studio Code Coverage tools",
+        lambda: False,
+    )
+
+
 def check_python(r: CheckResult) -> None:
     py = sys.executable
     v  = run_version(py, "--version")
@@ -544,6 +576,10 @@ def main() -> int:
     print()
     print("  ── OpenCppCoverage (Windows only) ──────────────────────")
     check_opencpp(r)
+
+    print()
+    print("  ── Microsoft Code Coverage (Windows only) ──────────────")
+    check_microsoft_coverage(r)
 
     print()
     print("  ── C++23 compile tests ─────────────────────────────────")

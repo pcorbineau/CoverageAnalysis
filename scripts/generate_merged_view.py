@@ -50,16 +50,18 @@ OUT = REPORTS / "merged.html"
 GCOV_LINES = REPORTS / "gcov" / "lines.json"
 LLVM_LINES = REPORTS / "llvm" / "lines.json"
 OPENCPP_XML = REPORTS / "opencpp" / "coverage.xml"
+MICROSOFT_XML = REPORTS / "microsoft" / "coverage.xml"
 
 # ── Tool palette ──────────────────────────────────────────────────────────────
 
-_ALL_TOOLS = ["gcov", "llvm", "opencpp"]
+_ALL_TOOLS = ["gcov", "llvm", "opencpp", "microsoft"]
 
-TOOL_LABEL = {"gcov": "GCC", "llvm": "LLVM", "opencpp": "MSVC"}
+TOOL_LABEL = {"gcov": "GCC", "llvm": "LLVM", "opencpp": "MSVC", "microsoft": "MSVC+VS"}
 TOOL_TAG = {"gcov": "gcov", "llvm": "llvm-cov", "opencpp": "opencpp"}
+TOOL_TAG["microsoft"] = "ms-cc"
 
-TOOL_COLOR = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43"}
-TOOL_MISS_BG = {"gcov": "#EDEEFF", "llvm": "#DDFAF5", "opencpp": "#FFFCD9"}
+TOOL_COLOR = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43", "microsoft": "#5A8CFF"}
+TOOL_MISS_BG = {"gcov": "#EDEEFF", "llvm": "#DDFAF5", "opencpp": "#FFFCD9", "microsoft": "#E8F0FF"}
 
 
 def _build_active_tools() -> list[str]:
@@ -71,6 +73,8 @@ def _build_active_tools() -> list[str]:
         active.append("llvm")
     if OPENCPP_XML.exists():
         active.append("opencpp")
+    if MICROSOFT_XML.exists():
+        active.append("microsoft")
     if not active:
         return list(_ALL_TOOLS)
     return active
@@ -187,6 +191,26 @@ def parse_opencpp(coverage: Coverage) -> None:
             hits = int(line_el.attrib.get("hits", 0))
             coverage[key].setdefault(ln, empty_line_entry())
             coverage[key][ln]["opencpp"] = hits > 0
+
+
+def parse_microsoft(coverage: Coverage) -> None:
+    if not MICROSOFT_XML.exists():
+        print(f"[WARN] Not found: {MICROSOFT_XML}", file=sys.stderr)
+        return
+    tree = ET.parse(MICROSOFT_XML)
+    for cls in tree.getroot().iter("class"):
+        key = normalise(cls.attrib.get("filename", ""))
+        if not key:
+            continue
+        coverage.setdefault(key, {})
+        lines_el = cls.find("lines")
+        if lines_el is None:
+            continue
+        for line_el in lines_el:
+            ln = int(line_el.attrib["number"])
+            hits = int(line_el.attrib.get("hits", 0))
+            coverage[key].setdefault(ln, empty_line_entry())
+            coverage[key][ln]["microsoft"] = hits > 0
 
 
 # ── Source reader ─────────────────────────────────────────────────────────────
@@ -817,7 +841,8 @@ body {
 }
 .th-tag-gcov,    .tag-cell-gcov    { width: 56px;  border-right: none; }
 .th-tag-llvm,    .tag-cell-llvm    { width: 74px;  border-right: none; }
-.th-tag-opencpp, .tag-cell-opencpp { width: 92px;  border-right: 1px solid #E5E5EA; }
+.th-tag-opencpp, .tag-cell-opencpp { width: 92px;  border-right: none; }
+.th-tag-microsoft, .tag-cell-microsoft { width: 62px; border-right: 1px solid #E5E5EA; }
 .tag-cell-merged { vertical-align: top; padding-top: .08rem !important; }
 
 /* ── Table rows ── */
@@ -906,7 +931,7 @@ function showFile(id) {
 
 
 def _tool_col_css(tools: list[str]) -> str:
-    widths = {"gcov": 56, "llvm": 74, "opencpp": 92}
+    widths = {"gcov": 56, "llvm": 74, "opencpp": 92, "microsoft": 62}
     rules = []
     for i, tool in enumerate(tools):
         width = widths.get(tool, 60)
@@ -1023,6 +1048,7 @@ def main() -> int:
     parse_gcov(coverage)
     parse_llvm(coverage)
     parse_opencpp(coverage)
+    parse_microsoft(coverage)
 
     sources = read_source_files()
 

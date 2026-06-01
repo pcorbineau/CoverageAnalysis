@@ -175,7 +175,34 @@ jobs:
           retention-days: 1
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 4 — Merge + GitHub Pages deploy
+# JOB 4 — MSVC + Microsoft Code Coverage  (Windows)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  microsoft:
+    name: "Microsoft Code Coverage (MSVC)"
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Catch2 FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build-msvc-coverage\_deps
+          key: catch2-msvc-coverage-${{ runner.os }}-v3.5.3
+
+      - name: Run Microsoft Code Coverage pipeline
+        run: python scripts/run_microsoft_coverage.py --skip-prereqs
+
+      - name: Upload Microsoft Code Coverage results
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-microsoft
+          path: coverage-reports\microsoft\
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — Merge + GitHub Pages deploy
 # Waits for all three tool jobs; merges their artifacts; generates the landing
 # page + merged view; deploys to GitHub Pages.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,7 +210,7 @@ jobs:
   deploy:
     name: "Deploy to GitHub Pages"
     runs-on: ubuntu-latest
-    needs: [gcov, llvm, opencpp]
+    needs: [gcov, llvm, opencpp, microsoft]
     # Only deploy from the default branch — PR merge refs are not allowed
     # to write to the github-pages environment.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -215,13 +242,19 @@ jobs:
           name: coverage-opencpp
           path: coverage-reports/opencpp
 
+      - name: Download Microsoft Code Coverage results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-microsoft
+          path: coverage-reports/microsoft
+
       # ── Copy source files so merged view can read them ───────────────────
       # (src/ is already present — it's in the checkout)
 
       - name: Install tree-sitter for merged view
         run: pip install tree-sitter tree-sitter-cpp
 
-      # ── Generate landing page + merged view with all 3 tool outputs ──────
+      # ── Generate landing page + merged view with all tool outputs ─────────
       - name: Generate landing page and merged view
         run: python3 scripts/generate_landing_page.py
 
@@ -236,8 +269,8 @@ jobs:
         uses: actions/deploy-pages@v4
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JOB 5 — PR sentinel
-# A single always-present job that succeeds iff all three tool jobs passed.
+# JOB 6 — PR sentinel
+# A single always-present job that succeeds iff all tool jobs passed.
 # Add "CI" as the sole required status check in branch protection rules so
 # you don't have to list each tool job individually.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -245,7 +278,7 @@ jobs:
   ci:
     name: "CI"
     runs-on: ubuntu-latest
-    needs: [gcov, llvm, opencpp]
+    needs: [gcov, llvm, opencpp, microsoft]
     if: always()
     steps:
       - name: All coverage jobs passed

@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(COVERAGE_GCOV "Enable gcov coverage instrumentation (GCC)" OFF)
 option(COVERAGE_LLVM "Enable llvm-cov coverage instrumentation (Clang)" OFF)
+option(COVERAGE_MSVC "Enable Microsoft Code Coverage instrumentation helpers (MSVC)" OFF)
 
 include(cmake/CodeCoverage.cmake)
 
@@ -23,6 +24,9 @@ if(COVERAGE_GCOV)
 endif()
 if(COVERAGE_LLVM)
     enable_llvm_coverage(coverage_lib)
+endif()
+if(COVERAGE_MSVC)
+    enable_msvc_coverage(coverage_lib)
 endif()
 
 # ── Tests ─────────────────────────────────────────────────────────────────

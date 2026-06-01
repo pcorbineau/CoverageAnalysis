@@ -1,8 +1,10 @@
 # cmake/CodeCoverage.cmake
-# Helper functions to enable coverage instrumentation for GCC (gcov) and Clang (llvm-cov).
+# Helper functions to enable coverage instrumentation for GCC (gcov),
+# Clang (llvm-cov), and MSVC (Microsoft Code Coverage).
 # Usage:
 #   enable_gcov_coverage(<target>)   -- adds --coverage flags
 #   enable_llvm_coverage(<target>)   -- adds -fprofile-instr-generate / -fcoverage-mapping flags
+#   enable_msvc_coverage(<target>)   -- adds /PROFILE for static native instrumentation
 
 function(enable_gcov_coverage target)
     message(STATUS "[Coverage] Enabling gcov instrumentation on target: ${target}")
@@ -32,4 +34,18 @@ function(enable_llvm_coverage target)
         # -femit-all-decls: tested below — kept only if it produces a delta.
     )
     target_link_options(${target} PUBLIC -fprofile-instr-generate)
+endfunction()
+
+function(enable_msvc_coverage target)
+    if(NOT MSVC)
+        message(FATAL_ERROR "enable_msvc_coverage(${target}) requires MSVC")
+    endif()
+
+    message(STATUS "[Coverage] Enabling Microsoft Code Coverage instrumentation helpers on target: ${target}")
+    target_compile_options(${target} PUBLIC
+        /Od
+        /Zi
+    )
+    # /PROFILE enables the linker support required for static native instrumentation.
+    target_link_options(${target} PUBLIC /DEBUG /PROFILE)
 endfunction()

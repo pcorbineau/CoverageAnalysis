@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
 generate_landing_page.py
-Parses coverage summary files produced by the three tools and generates
+Parses coverage summary files produced by the available tools and generates
 coverage-reports/index.html — a self-contained landing page with:
-  - A comparison table (line / branch / function % per tool)
+  - A comparison table (line / branch / function % per available tool)
   - Direct links to each tool's full HTML report
   - Colour-coded cells (green ≥ 80 %, amber ≥ 60 %, red < 60 %)
   - A methodology note for each tool
+
+Dynamic mode: only tools whose summary files exist are shown.
+This means the page works correctly with 1, 2, or all 3 tools.
 """
 
 import json
 import os
-import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -22,29 +24,31 @@ from typing import Optional
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
-ROOT          = Path(__file__).resolve().parent.parent
-REPORTS       = ROOT / "coverage-reports"
-OUT_HTML      = REPORTS / "index.html"
+ROOT         = Path(__file__).resolve().parent.parent
+REPORTS      = ROOT / "coverage-reports"
+OUT_HTML     = REPORTS / "index.html"
 
-OPENCPP_XML   = REPORTS / "opencpp"  / "coverage.xml"
-GCOV_JSON     = REPORTS / "gcov"     / "summary.json"
-LLVM_JSON     = REPORTS / "llvm"     / "summary.json"
+OPENCPP_XML  = REPORTS / "opencpp"  / "coverage.xml"
+GCOV_JSON    = REPORTS / "gcov"     / "summary.json"
+LLVM_JSON    = REPORTS / "llvm"     / "summary.json"
 
-OPENCPP_HREF  = "opencpp/index.html"
-GCOV_HREF     = "gcov/index.html"
-LLVM_HREF     = "llvm/html/index.html"
+OPENCPP_HREF = "opencpp/index.html"
+GCOV_HREF    = "gcov/index.html"
+LLVM_HREF    = "llvm/html/index.html"
 
 # ── Data model ───────────────────────────────────────────────────────────────
 
 @dataclass
 class ToolResult:
-    name:             str
-    href:             str
-    line_pct:         Optional[float] = None
-    branch_pct:       Optional[float] = None
-    function_pct:     Optional[float] = None
-    available:        bool            = False
-    notes:            str             = ""
+    name:         str
+    href:         str
+    css_class:    str                  # "opencpp" | "gcov" | "llvm"
+    accent:       str                  # accent colour hex
+    line_pct:     Optional[float] = None
+    branch_pct:   Optional[float] = None
+    function_pct: Optional[float] = None
+    available:    bool            = False
+    notes:        str             = ""
 
 
 # ── Parsers ──────────────────────────────────────────────────────────────────
@@ -53,11 +57,13 @@ def parse_opencpp(path: Path) -> ToolResult:
     result = ToolResult(
         name="OpenCppCoverage",
         href=OPENCPP_HREF,
+        css_class="opencpp",
+        accent="#FEDF43",
         notes="Line coverage only via debug-info (PDB). "
-              "Branch and function metrics not produced by this tool."
+              "Branch and function metrics not produced by this tool.",
     )
     if not path.exists():
-        print(f"[WARN] Not found: {path}")
+        print(f"[INFO] Not found (skipped): {path}")
         return result
     try:
         tree = ET.parse(path)
@@ -75,11 +81,13 @@ def parse_gcov(path: Path) -> ToolResult:
     result = ToolResult(
         name="gcov / gcovr",
         href=GCOV_HREF,
+        css_class="gcov",
+        accent="#A7AAFF",
         notes="Line + branch + function coverage via GCC --coverage instrumentation. "
-              "Reports source-mapped data including header-only functions."
+              "Reports source-mapped data including header-only functions.",
     )
     if not path.exists():
-        print(f"[WARN] Not found: {path}")
+        print(f"[INFO] Not found (skipped): {path}")
         return result
     try:
         with open(path) as f:
@@ -97,11 +105,13 @@ def parse_llvm(path: Path) -> ToolResult:
     result = ToolResult(
         name="llvm-cov (Clang)",
         href=LLVM_HREF,
+        css_class="llvm",
+        accent="#54DFCB",
         notes="Line + branch + function + region coverage via source-based instrumentation. "
-              "Most granular: can show per-instantiation template coverage."
+              "Most granular: can show per-instantiation template coverage.",
     )
     if not path.exists():
-        print(f"[WARN] Not found: {path}")
+        print(f"[INFO] Not found (skipped): {path}")
         return result
     try:
         with open(path) as f:
@@ -117,22 +127,15 @@ def parse_llvm(path: Path) -> ToolResult:
 
 # ── HTML helpers ─────────────────────────────────────────────────────────────
 
-def pct_color(value: Optional[float]) -> str:
-    # Apple "Increased Contrast (Dark)" system colours — vivid pastels
-    if value is None:
-        return "#E5E5EA"
-    if value >= 80.0:
-        return "#4CD964"   # Apple IC-Dark Green
-    if value >= 60.0:
-        return "#FFB340"   # Apple IC-Dark Orange
-    return "#FF6961"       # Apple IC-Dark Red
-
-
 def pct_cell(value: Optional[float]) -> str:
     if value is None:
         return '<td class="na">N/A</td>'
-    color = pct_color(value)
-    # Semi-transparent background (D0 = ~82% opacity) with solid text colour
+    if value >= 80.0:
+        color = "#4CD964"
+    elif value >= 60.0:
+        color = "#FFB340"
+    else:
+        color = "#FF6961"
     return (
         f'<td style="background:{color}D0;color:#1D1D1F;font-weight:bold;'
         f'text-align:center;">{value:.1f}%</td>'
@@ -152,6 +155,16 @@ def tool_row(r: ToolResult) -> str:
         + pct_cell(r.function_pct)
         + "</tr>"
     )
+
+
+def tool_card(r: ToolResult) -> str:
+    link_cls = "" if r.available else 'class="disabled"'
+    return f"""\
+    <div class="card {r.css_class}">
+      <h3>{r.name}</h3>
+      <p>{r.notes}</p>
+      <a href="{r.href}" {link_cls}>Open Report</a>
+    </div>"""
 
 
 # ── HTML template ────────────────────────────────────────────────────────────
@@ -316,7 +329,7 @@ HTML_TEMPLATE = """\
 
 <!-- ── Tab: Summary ─────────────────────────────────────────────────────── -->
 <div id="tab-summary" class="panel active">
-  <p class="subtitle">Generated {date} &mdash; OpenCppCoverage &bull; gcov/gcovr &bull; llvm-cov</p>
+  <p class="subtitle">Generated {date} &mdash; {tool_list}</p>
 
   <div class="legend">
     <span class="legend-item"><span class="swatch" style="background:#4CD964"></span>&ge; 80 % &mdash; good</span>
@@ -339,25 +352,7 @@ HTML_TEMPLATE = """\
   </table>
 
   <div class="cards">
-
-    <div class="card opencpp">
-      <h3>OpenCppCoverage</h3>
-      <p>{opencpp_notes}</p>
-      <a href="{opencpp_href}" {opencpp_disabled}>Open Report</a>
-    </div>
-
-    <div class="card gcov">
-      <h3>gcov / gcovr</h3>
-      <p>{gcov_notes}</p>
-      <a href="{gcov_href}" {gcov_disabled}>Open Report</a>
-    </div>
-
-    <div class="card llvm">
-      <h3>llvm-cov (Clang)</h3>
-      <p>{llvm_notes}</p>
-      <a href="{llvm_href}" {llvm_disabled}>Open Report</a>
-    </div>
-
+{cards}
   </div>
 
   <footer>
@@ -395,23 +390,25 @@ def main() -> int:
     gcov    = parse_gcov(GCOV_JSON)
     llvm    = parse_llvm(LLVM_JSON)
 
-    rows = "\n".join(f"    {tool_row(r)}" for r in [opencpp, gcov, llvm])
+    all_tools = [opencpp, gcov, llvm]
 
-    def disabled(r: ToolResult) -> str:
-        return "" if r.available else 'class="disabled"'
+    # Only include available tools in the table and cards
+    available = [t for t in all_tools if t.available]
+    if not available:
+        print("[WARN] No tool results found — landing page will show empty state")
+        # Still generate the page so CI doesn't fail
+        available = all_tools
+
+    rows  = "\n".join(f"    {tool_row(r)}" for r in available)
+    cards = "\n".join(tool_card(r) for r in available)
+
+    tool_list = " &bull; ".join(r.name for r in available)
 
     page = HTML_TEMPLATE.format(
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        tool_list=tool_list,
         rows=rows,
-        opencpp_notes=opencpp.notes,
-        opencpp_href=opencpp.href,
-        opencpp_disabled=disabled(opencpp),
-        gcov_notes=gcov.notes,
-        gcov_href=gcov.href,
-        gcov_disabled=disabled(gcov),
-        llvm_notes=llvm.notes,
-        llvm_href=llvm.href,
-        llvm_disabled=disabled(llvm),
+        cards=cards,
     )
 
     OUT_HTML.write_text(page, encoding="utf-8")

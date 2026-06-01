@@ -4,3 +4,7 @@
 /build-ninja
 /coverage-reports
 /LastCoverageResults.log
+
+# Project-local Python venv (gcovr isolation — see scripts/check_prereqs.py)
+/.coverage-venv
+__pycache__

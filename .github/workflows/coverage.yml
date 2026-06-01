@@ -1,0 +1,230 @@
+name: Coverage Analysis
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+  pull_request:
+  workflow_dispatch:   # manual "Run workflow" button in the GitHub UI
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Permissions required for GitHub Pages deployment
+# ─────────────────────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+  pages:    write
+  id-token: write
+
+# Only one Pages deployment at a time; cancel in-flight runs on the same ref.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — GCC + gcovr  (Ubuntu)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  gcov:
+    name: "gcov (GCC + gcovr)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Cache: apt packages ──────────────────────────────────────────────
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-gcc-${{ runner.os }}-${{ hashFiles('.github/workflows/coverage.yml') }}
+          restore-keys: apt-gcc-${{ runner.os }}-
+
+      # ── Cache: pip/gcovr inside the project venv ─────────────────────────
+      - name: Cache project venv (gcovr)
+        uses: actions/cache@v4
+        id: venv-gcov-cache
+        with:
+          path: .coverage-venv
+          key: venv-gcovr-${{ runner.os }}-${{ hashFiles('**/coverage.yml') }}
+          restore-keys: venv-gcovr-${{ runner.os }}-
+
+      # ── Cache: Catch2 FetchContent download ──────────────────────────────
+      - name: Cache Catch2 FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build-gcc/_deps
+          key: catch2-gcc-${{ runner.os }}-v3.5.3
+
+      # ── Install system tools ─────────────────────────────────────────────
+      - name: Install GCC and CMake
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            g++ gcc cmake ninja-build
+
+      # ── Set up project venv + gcovr (if not restored from cache) ─────────
+      - name: Set up project venv (gcovr)
+        if: steps.venv-gcov-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -m venv .coverage-venv
+          .coverage-venv/bin/pip install --upgrade pip gcovr
+
+      # ── Run GCC pipeline ─────────────────────────────────────────────────
+      - name: Run gcov pipeline
+        run: python3 scripts/run_gcov.py --skip-prereqs
+
+      # ── Upload gcov artifact ─────────────────────────────────────────────
+      - name: Upload gcov results
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-gcov
+          path: coverage-reports/gcov/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — Clang + llvm-cov  (Ubuntu)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  llvm:
+    name: "llvm-cov (Clang)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Cache: apt packages ──────────────────────────────────────────────
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-llvm-${{ runner.os }}-${{ hashFiles('.github/workflows/coverage.yml') }}
+          restore-keys: apt-llvm-${{ runner.os }}-
+
+      # ── Cache: Catch2 FetchContent download ──────────────────────────────
+      - name: Cache Catch2 FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build-clang/_deps
+          key: catch2-clang-${{ runner.os }}-v3.5.3
+
+      # ── Install system tools ─────────────────────────────────────────────
+      - name: Install Clang, LLVM and CMake
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm cmake ninja-build
+
+      # ── Run LLVM pipeline ────────────────────────────────────────────────
+      - name: Run llvm-cov pipeline
+        run: python3 scripts/run_llvm_cov.py --skip-prereqs
+
+      # ── Upload llvm artifact ─────────────────────────────────────────────
+      - name: Upload llvm-cov results
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-llvm
+          path: coverage-reports/llvm/
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — MSVC + OpenCppCoverage  (Windows)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  opencpp:
+    name: "OpenCppCoverage (MSVC)"
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Cache: Catch2 FetchContent download ──────────────────────────────
+      - name: Cache Catch2 FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build-ninja\_deps
+          key: catch2-msvc-${{ runner.os }}-v3.5.3
+
+      # ── Cache: OpenCppCoverage Chocolatey install ─────────────────────────
+      # We cache the install directory so choco only runs on a cache miss.
+      - name: Cache OpenCppCoverage install
+        uses: actions/cache@v4
+        id: opencpp-cache
+        with:
+          path: C:\Program Files\OpenCppCoverage
+          key: opencppcoverage-0.9.9.0
+
+      - name: Install OpenCppCoverage (choco)
+        if: steps.opencpp-cache.outputs.cache-hit != 'true'
+        run: choco install opencppcoverage --no-progress -y
+
+      - name: Add OpenCppCoverage to PATH
+        run: echo "C:\Program Files\OpenCppCoverage" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      # ── Run OpenCppCoverage pipeline ─────────────────────────────────────
+      - name: Run OpenCppCoverage pipeline
+        run: python scripts/run_opencpp_coverage.py --skip-prereqs
+
+      # ── Upload opencpp artifact ──────────────────────────────────────────
+      - name: Upload OpenCppCoverage results
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-opencpp
+          path: coverage-reports\opencpp\
+          retention-days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — Merge + GitHub Pages deploy
+# Waits for all three tool jobs; merges their artifacts; generates the landing
+# page + merged view; deploys to GitHub Pages.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  deploy:
+    name: "Deploy to GitHub Pages"
+    runs-on: ubuntu-latest
+    needs: [gcov, llvm, opencpp]
+
+    # The github-pages environment is required for Pages deployments.
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy-pages.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Download all three tool artifacts ────────────────────────────────
+      - name: Download gcov results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-gcov
+          path: coverage-reports/gcov
+
+      - name: Download llvm-cov results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-llvm
+          path: coverage-reports/llvm
+
+      - name: Download OpenCppCoverage results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-opencpp
+          path: coverage-reports/opencpp
+
+      # ── Copy source files so merged view can read them ───────────────────
+      # (src/ is already present — it's in the checkout)
+
+      # ── Generate landing page + merged view with all 3 tool outputs ──────
+      - name: Generate landing page and merged view
+        run: python3 scripts/generate_landing_page.py
+
+      # ── Upload site to GitHub Pages ──────────────────────────────────────
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: coverage-reports/
+
+      - name: Deploy to GitHub Pages
+        id: deploy-pages
+        uses: actions/deploy-pages@v4

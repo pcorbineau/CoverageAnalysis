@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 generate_merged_view.py
-Reads per-line coverage data from all three tools and produces
+Reads per-line coverage data from all available tools and produces
 coverage-reports/merged.html — a self-contained page with:
   - A file-list sidebar (click to show one file at a time)
   - Per-tool coverage indicator strips to the LEFT of the line number
   - A merged summary (lines covered by >= 1 tool)
+
+Dynamic mode: tools are included only when their data files exist.
+This means the page works correctly with 1, 2, or all 3 tools.
 
 Apple-inspired light theme.
 Tool accent colours — soft pastels, no green / orange / red:
@@ -38,7 +41,9 @@ OPENCPP_XML = REPORTS / "opencpp" / "coverage.xml"
 
 # ── Tool palette ──────────────────────────────────────────────────────────────
 
-TOOLS = ["gcov", "llvm", "opencpp"]
+# Full registry — entries are only included in TOOLS at runtime when their
+# data files actually exist (see _build_active_tools() below).
+_ALL_TOOLS = ["gcov", "llvm", "opencpp"]
 
 TOOL_LABEL = {"gcov": "GCC", "llvm": "LLVM", "opencpp": "MSVC"}
 # Short tag labels shown inside each pill
@@ -53,14 +58,35 @@ TOOL_COLOR   = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43"}
 TOOL_MISS_BG = {"gcov": "#EDEEFF", "llvm": "#DDFAF5", "opencpp": "#FFFCD9"}
 TOOL_HIT_FG  = {"gcov": "#1D1D1F", "llvm": "#1D1D1F", "opencpp": "#1D1D1F"}
 
+
+def _build_active_tools() -> list[str]:
+    """Return the subset of tools whose data files are present on disk."""
+    active = []
+    if GCOV_LINES.exists():
+        active.append("gcov")
+    if LLVM_LINES.exists():
+        active.append("llvm")
+    if OPENCPP_XML.exists():
+        active.append("opencpp")
+    if not active:
+        # No data at all yet — return all so callers can still render empty state
+        return list(_ALL_TOOLS)
+    return active
+
+
+# TOOLS is set after the path constants are defined (see bottom of section).
+
 # ── Data types ─────────────────────────────────────────────────────────────────
 
 # True = covered, False = instrumented but missed, None = not tracked by tool
 Coverage = Dict[str, Dict[int, Dict[str, Optional[bool]]]]
 
+# TOOLS is populated in main() once we know which data files exist.
+TOOLS: list[str] = []
+
 
 def empty_line_entry() -> Dict[str, Optional[bool]]:
-    return {t: None for t in TOOLS}
+    return {t: None for t in _ALL_TOOLS}
 
 
 # ── Path normalisation ────────────────────────────────────────────────────────
@@ -524,6 +550,7 @@ body {
   letter-spacing: .06em;
   color: #86868B;
 }
+/* Per-tool tag column widths — overridden dynamically from Python */
 .th-tag-gcov,    .tag-cell-gcov    { width: 56px;  border-right: none; }
 .th-tag-llvm,    .tag-cell-llvm    { width: 74px;  border-right: none; }
 .th-tag-opencpp, .tag-cell-opencpp { width: 50px;  border-right: 1px solid #E5E5EA; }
@@ -613,9 +640,23 @@ function showFile(id) {
 """
 
 
+def _tool_col_css(tools: list[str]) -> str:
+    """Generate .th-tag-X / .tag-cell-X width rules for only the active tools."""
+    # widths per tool — last active tool gets the separator border
+    widths = {"gcov": 56, "llvm": 74, "opencpp": 50}
+    rules = []
+    for i, t in enumerate(tools):
+        w = widths.get(t, 60)
+        border = "border-right: 1px solid #E5E5EA;" if i == len(tools) - 1 else "border-right: none;"
+        rules.append(
+            f".th-tag-{t}, .tag-cell-{t} {{ width: {w}px; {border} }}"
+        )
+    return "\n".join(rules)
+
+
 # ── Full page ─────────────────────────────────────────────────────────────────
 
-def build_page(sources: Dict[str, List[str]], coverage: Coverage) -> str:
+def build_page(sources: Dict[str, List[str]], coverage: Coverage, tools: list[str]) -> str:
     all_files = sorted(set(sources.keys()) | set(coverage.keys()))
 
     # Sidebar
@@ -665,7 +706,11 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage) -> str:
         '</span>'
     )
 
+    tool_names = " / ".join(TOOL_LABEL[t] for t in tools)
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Dynamic tool CSS overrides
+    tool_col_css = _tool_col_css(tools)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -673,13 +718,16 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage) -> str:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Coverage — Merged View</title>
-  <style>{CSS}</style>
+  <style>{CSS}
+/* ── Dynamic tool column widths ── */
+{tool_col_css}
+  </style>
 </head>
 <body>
 
 <div class="topbar">
   <h1>Coverage &mdash; Merged View</h1>
-  <span class="subtitle">Generated {date_str} &mdash; line-level comparison across GCC, LLVM, MSVC</span>
+  <span class="subtitle">Generated {date_str} &mdash; line-level comparison across {tool_names}</span>
 </div>
 
 <div class="legend">
@@ -714,6 +762,9 @@ def build_page(sources: Dict[str, List[str]], coverage: Coverage) -> str:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> int:
+    global TOOLS
+    TOOLS = _build_active_tools()
+
     coverage: Coverage = {}
     parse_gcov(coverage)
     parse_llvm(coverage)
@@ -725,10 +776,11 @@ def main() -> int:
         print("[ERROR] No coverage data and no source files found.", file=sys.stderr)
         return 1
 
-    page = build_page(sources, coverage)
+    page = build_page(sources, coverage, TOOLS)
     REPORTS.mkdir(parents=True, exist_ok=True)
     OUT.write_text(page, encoding="utf-8")
-    print(f"Merged view written: {OUT}")
+    active_tools = ", ".join(TOOL_LABEL[t] for t in TOOLS)
+    print(f"Merged view written: {OUT}  (tools: {active_tools})")
     return 0
 
 

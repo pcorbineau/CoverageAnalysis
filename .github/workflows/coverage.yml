@@ -184,6 +184,9 @@ jobs:
     name: "Deploy to GitHub Pages"
     runs-on: ubuntu-latest
     needs: [gcov, llvm, opencpp]
+    # Only deploy from the default branch — PR merge refs are not allowed
+    # to write to the github-pages environment.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     # The github-pages environment is required for Pages deployments.
     environment:

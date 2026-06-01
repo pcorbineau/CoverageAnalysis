@@ -112,10 +112,18 @@ def line_entry_or_empty(
 def normalise(path: str) -> str:
     """Return a canonical relative key like 'src/calculator.cpp'."""
     s = path.replace("\\", "/")
-    idx = s.find("/src/")
+    lower = s.lower()
+    idx = lower.find("/src/")
     if idx != -1:
         return "src/" + s[idx + 5 :]
-    p = Path(path)
+
+    parts = [part for part in s.split("/") if part]
+    lower_parts = [part.lower() for part in parts]
+    if "src" in lower_parts:
+        src_idx = lower_parts.index("src")
+        return "src/" + "/".join(parts[src_idx + 1 :])
+
+    p = Path(s)
     try:
         rel = p.resolve().relative_to(ROOT.resolve())
         rel_str = rel.as_posix()

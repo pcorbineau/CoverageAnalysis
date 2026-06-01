@@ -268,6 +268,52 @@ jobs:
         id: deploy-pages
         uses: actions/deploy-pages@v4
 
+  preview:
+    name: "Preview coverage site artifact"
+    runs-on: ubuntu-latest
+    needs: [gcov, llvm, opencpp, microsoft]
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download gcov results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-gcov
+          path: coverage-reports/gcov
+
+      - name: Download llvm-cov results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-llvm
+          path: coverage-reports/llvm
+
+      - name: Download OpenCppCoverage results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-opencpp
+          path: coverage-reports/opencpp
+
+      - name: Download Microsoft Code Coverage results
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-microsoft
+          path: coverage-reports/microsoft
+
+      - name: Install tree-sitter for merged view
+        run: pip install tree-sitter tree-sitter-cpp
+
+      - name: Generate preview site
+        run: python3 scripts/generate_landing_page.py
+
+      - name: Upload preview site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-site-preview
+          path: coverage-reports/
+          retention-days: 7
+
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 6 — PR sentinel
 # A single always-present job that succeeds iff all tool jobs passed.

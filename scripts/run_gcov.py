@@ -82,7 +82,7 @@ def find_gcc() -> str:
             except subprocess.CalledProcessError:
                 pass
     elif SYSTEM == "Linux":
-        for ver in ("14", "13"):
+        for ver in ("16", "15", "14", "13"):
             binary = shutil.which(f"g++-{ver}")
             if binary:
                 return binary

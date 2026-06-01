@@ -93,8 +93,10 @@ def _apt_llvm_bin() -> Path | None:
 def find_clang() -> str:
     """
     Return the clang++ binary.
-    On macOS: prefers Homebrew LLVM over Apple Clang (Apple Clang lacks
-    llvm-profdata / llvm-cov in the same suite).
+    - macOS: prefers Homebrew LLVM over Apple Clang (Apple Clang lacks
+      llvm-profdata / llvm-cov in the same suite).
+    - Linux: prefers the highest versioned clang++ available so the matching
+      llvm-cov-N / llvm-profdata-N tools are resolved correctly.
     """
     if SYSTEM == "Darwin":
         llvm_bin = _homebrew_llvm_bin()
@@ -102,6 +104,11 @@ def find_clang() -> str:
             candidate = llvm_bin / "clang++"
             if candidate.exists():
                 return str(candidate)
+    elif SYSTEM == "Linux":
+        for ver in ("22", "21", "20", "19", "18"):
+            binary = shutil.which(f"clang++-{ver}")
+            if binary:
+                return binary
     return "clang++"
 
 def _clang_major(clang_bin: str) -> str:

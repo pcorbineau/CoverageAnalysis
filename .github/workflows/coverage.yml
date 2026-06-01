@@ -58,11 +58,12 @@ jobs:
           key: catch2-gcc-${{ runner.os }}-v3.5.3
 
       # ── Install system tools ─────────────────────────────────────────────
-      - name: Install GCC and CMake
+      - name: Install GCC 16 and CMake
         run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            g++-14 gcc-14 cmake ninja-build
+            g++-16 gcc-16 cmake ninja-build
 
       # ── Set up project venv + gcovr (if not restored from cache) ─────────
       - name: Set up project venv (gcovr)
@@ -110,11 +111,10 @@ jobs:
           key: catch2-clang-${{ runner.os }}-v3.5.3
 
       # ── Install system tools ─────────────────────────────────────────────
-      - name: Install Clang, LLVM and CMake
+      - name: Install Clang 22, LLVM and CMake
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            clang llvm cmake ninja-build
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 22
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
 
       # ── Run LLVM pipeline ────────────────────────────────────────────────
       - name: Run llvm-cov pipeline

@@ -416,11 +416,11 @@ HTML_TEMPLATE = """\
       display: flex;
       flex-wrap: wrap;
       gap: 1rem;
-      max-width: 900px;
       margin-bottom: 2.5rem;
     }}
     .card {{
       flex: 1 1 260px;
+      max-width: 400px;
       background: #FFFFFF;
       border-radius: 12px;
       padding: 1.25rem;

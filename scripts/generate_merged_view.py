@@ -190,6 +190,8 @@ def parse_opencpp(coverage: Coverage) -> None:
         key = normalise(cls.attrib.get("filename", ""))
         if not key:
             continue
+        if not key.startswith("src/"):
+            continue  # skip test files and external headers
         coverage.setdefault(key, {})
         lines_el = cls.find("lines")
         if lines_el is None:
@@ -210,6 +212,8 @@ def parse_microsoft(coverage: Coverage) -> None:
         key = normalise(cls.attrib.get("filename", ""))
         if not key:
             continue
+        if not key.startswith("src/"):
+            continue  # skip test files and external headers
         coverage.setdefault(key, {})
         lines_el = cls.find("lines")
         if lines_el is None:

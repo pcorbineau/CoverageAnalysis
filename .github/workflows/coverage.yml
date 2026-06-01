@@ -4,7 +4,6 @@ name: Coverage Analysis
 # Triggers
 # ─────────────────────────────────────────────────────────────────────────────
 on:
-  push:
   pull_request:
   workflow_dispatch:   # manual "Run workflow" button in the GitHub UI
 

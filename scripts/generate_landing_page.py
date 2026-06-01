@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -33,6 +33,9 @@ OPENCPP_XML  = REPORTS / "opencpp"  / "coverage.xml"
 GCOV_JSON    = REPORTS / "gcov"     / "summary.json"
 LLVM_JSON    = REPORTS / "llvm"     / "summary.json"
 MICROSOFT_JSON = REPORTS / "microsoft" / "summary.json"
+GCOV_LINES   = REPORTS / "gcov"     / "lines.json"
+LLVM_LINES   = REPORTS / "llvm"     / "lines.json"
+MICROSOFT_XML = REPORTS / "microsoft" / "coverage.xml"
 
 OPENCPP_HREF = "opencpp/index.html"
 GCOV_HREF    = "gcov/index.html"
@@ -55,6 +58,8 @@ class ToolResult:
     href:         str
     css_class:    str                  # "opencpp" | "gcov" | "llvm" | "microsoft"
     accent:       str                  # accent colour hex
+    line_total:   Optional[int]   = None
+    line_covered: Optional[int]   = None
     line_pct:     Optional[float] = None
     branch_pct:   Optional[float] = None
     function_pct: Optional[float] = None
@@ -80,8 +85,14 @@ def parse_opencpp(path: Path) -> ToolResult:
         tree = ET.parse(path)
         root = tree.getroot()
         line_rate = root.attrib.get("line-rate")
+        lines_valid = root.attrib.get("lines-valid")
+        lines_covered = root.attrib.get("lines-covered")
         if line_rate is not None:
             result.line_pct = round(float(line_rate) * 100.0, 1)
+        if lines_valid is not None:
+            result.line_total = int(lines_valid)
+        if lines_covered is not None:
+            result.line_covered = int(lines_covered)
         result.available = True
     except Exception as exc:
         print(f"[WARN] Could not parse {path}: {exc}")
@@ -103,6 +114,8 @@ def parse_gcov(path: Path) -> ToolResult:
     try:
         with open(path) as f:
             data = json.load(f)
+        result.line_total   = data.get("line_total")
+        result.line_covered = data.get("line_covered")
         result.line_pct     = round(data.get("line_percent",     0.0), 1)
         result.branch_pct   = round(data.get("branch_percent",   0.0), 1)
         result.function_pct = round(data.get("function_percent", 0.0), 1)
@@ -127,6 +140,8 @@ def parse_llvm(path: Path) -> ToolResult:
     try:
         with open(path) as f:
             data = json.load(f)
+        result.line_total   = data.get("line_total")
+        result.line_covered = None if data.get("line_total") is None or data.get("line_missed") is None else data.get("line_total") - data.get("line_missed")
         result.line_pct     = round(data.get("line_percent",     0.0), 1)
         result.branch_pct   = round(data.get("branch_percent",   0.0), 1)
         result.function_pct = round(data.get("function_percent", 0.0), 1)
@@ -150,6 +165,8 @@ def parse_microsoft(path: Path) -> ToolResult:
     try:
         with open(path) as f:
             data = json.load(f)
+        result.line_total   = data.get("line_total")
+        result.line_covered = data.get("line_covered")
         result.line_pct     = round(data.get("line_percent",     0.0), 1)
         result.branch_pct   = round(data.get("branch_percent",   0.0), 1)
         result.function_pct = round(data.get("function_percent", 0.0), 1)
@@ -176,7 +193,89 @@ def pct_cell(value: Optional[float]) -> str:
     )
 
 
-def tool_row(r: ToolResult) -> str:
+def count_cell(value: Optional[int], tool_total: Optional[int], theoretical_total: Optional[int]) -> str:
+    if value is None or tool_total is None:
+        return '<td class="na">N/A</td>'
+    _ = theoretical_total
+    return f'<td class="count-cell"><div class="count-main">{value}/{tool_total} lines</div></td>'
+
+
+def total_row(theoretical_total: Optional[int]) -> str:
+    if theoretical_total is None:
+        value = '<span class="na">N/A</span>'
+    else:
+        value = str(theoretical_total)
+    return (
+        '<tr class="comparison-total-row">'
+        '<td class="comparison-total-cell" colspan="5">'
+        '<div class="comparison-total-wrap">'
+        '<span class="comparison-total-label">Theoretical Total</span>'
+        f'<span class="comparison-total-value">{value} lines</span>'
+        '</div>'
+        '</td>'
+        '</tr>'
+    )
+
+
+def normalise(path: str) -> str:
+    s = path.replace("\\", "/")
+    idx = s.find("/src/")
+    if idx != -1:
+        return "src/" + s[idx + 5:]
+    p = Path(path)
+    parts = p.parts
+    if "src" in parts:
+        src_idx = parts.index("src")
+        return "/".join(parts[src_idx:])
+    return p.as_posix()
+
+
+def theoretical_line_total() -> Optional[int]:
+    coverable: set[tuple[str, int]] = set()
+
+    if GCOV_LINES.exists():
+        try:
+            with open(GCOV_LINES) as f:
+                data = json.load(f)
+            for file_entry in data.get("files", []):
+                filename = normalise(file_entry.get("file", ""))
+                for line in file_entry.get("lines", []):
+                    coverable.add((filename, int(line["line_number"])))
+        except Exception as exc:
+            print(f"[WARN] Could not parse {GCOV_LINES}: {exc}")
+
+    if LLVM_LINES.exists():
+        try:
+            with open(LLVM_LINES) as f:
+                data = json.load(f)
+            for file_entry in data.get("data", [{}])[0].get("files", []):
+                filename = normalise(file_entry.get("filename", ""))
+                for segment in file_entry.get("segments", []):
+                    seg_line, _col, _count, has_count, _is_entry, _is_gap = segment
+                    if has_count:
+                        coverable.add((filename, int(seg_line)))
+        except Exception as exc:
+            print(f"[WARN] Could not parse {LLVM_LINES}: {exc}")
+
+    for xml_path in (OPENCPP_XML, MICROSOFT_XML):
+        if not xml_path.exists():
+            continue
+        try:
+            root = ET.parse(xml_path).getroot()
+            for cls in root.iter("class"):
+                filename = normalise(cls.attrib.get("filename", ""))
+                lines_el = cls.find("lines")
+                if lines_el is None:
+                    continue
+                for line_el in lines_el:
+                    coverable.add((filename, int(line_el.attrib["number"])))
+        except Exception as exc:
+            print(f"[WARN] Could not parse {xml_path}: {exc}")
+
+    return len(coverable) if coverable else None
+
+
+def tool_row(r: ToolResult, theoretical_total: Optional[int]) -> str:
     if r.available:
         name_cell = f'<td><a href="{r.href}" target="_blank">{r.name}</a></td>'
     else:
@@ -184,6 +283,7 @@ def tool_row(r: ToolResult) -> str:
     return (
         "<tr>"
         + name_cell
+        + count_cell(r.line_covered, r.line_total, theoretical_total)
         + pct_cell(r.line_pct)
         + pct_cell(r.branch_pct)
         + pct_cell(r.function_pct)
@@ -266,7 +366,7 @@ HTML_TEMPLATE = """\
     /* ── Comparison table ── */
     .comparison {{
       width: 100%;
-      max-width: 760px;
+      max-width: 900px;
       border-collapse: collapse;
       margin-bottom: 2.5rem;
       background: #FFFFFF;
@@ -294,6 +394,23 @@ HTML_TEMPLATE = """\
     .comparison a {{ color: #0071E3; text-decoration: none; }}
     .comparison a:hover {{ text-decoration: underline; }}
     td.na {{ color: #AEAEB2; font-style: italic; text-align: center; }}
+    .count-cell {{ text-align: center; font-variant-numeric: tabular-nums; }}
+    .count-main {{ font-weight: 600; }}
+    .comparison tfoot td {{ border-bottom: none; }}
+    .comparison-total-cell {{
+      padding: 0 !important;
+      border-top: 1px solid #E5E5EA;
+      background: #FAFAFC;
+    }}
+    .comparison-total-wrap {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .8rem 1rem;
+      font-size: .9rem;
+    }}
+    .comparison-total-label {{ color: #6E6E73; font-weight: 600; }}
+    .comparison-total-value {{ font-variant-numeric: tabular-nums; font-weight: 700; }}
     /* ── Tool cards ── */
     .cards {{
       display: flex;
@@ -377,6 +494,7 @@ HTML_TEMPLATE = """\
     <thead>
       <tr>
         <th>Tool</th>
+        <th>Covered / Uncovered + Covered</th>
         <th>Line %</th>
         <th>Branch %</th>
         <th>Function %</th>
@@ -385,6 +503,9 @@ HTML_TEMPLATE = """\
     <tbody>
 {rows}
     </tbody>
+    <tfoot>
+{total_row}
+    </tfoot>
   </table>
 
   <div class="cards">
@@ -436,7 +557,10 @@ def main() -> int:
         # Still generate the page so CI doesn't fail
         available = all_tools
 
-    rows  = "\n".join(f"    {tool_row(r)}" for r in available)
+    theory_total = theoretical_line_total()
+
+    rows  = "\n".join(f"    {tool_row(r, theory_total)}" for r in available)
+    total_row_html = f"    {total_row(theory_total)}"
     cards = "\n".join(tool_card(r) for r in available)
 
     tool_list = " &bull; ".join(r.name for r in available)
@@ -445,6 +569,7 @@ def main() -> int:
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
         tool_list=tool_list,
         rows=rows,
+        total_row=total_row_html,
         cards=cards,
     )
 

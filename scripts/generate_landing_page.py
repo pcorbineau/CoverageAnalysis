@@ -27,6 +27,7 @@ from typing import Optional
 ROOT         = Path(__file__).resolve().parent.parent
 REPORTS      = ROOT / "coverage-reports"
 OUT_HTML     = REPORTS / "index.html"
+VENV_DIR     = ROOT / ".coverage-venv"
 
 OPENCPP_XML  = REPORTS / "opencpp"  / "coverage.xml"
 GCOV_JSON    = REPORTS / "gcov"     / "summary.json"
@@ -35,6 +36,14 @@ LLVM_JSON    = REPORTS / "llvm"     / "summary.json"
 OPENCPP_HREF = "opencpp/index.html"
 GCOV_HREF    = "gcov/index.html"
 LLVM_HREF    = "llvm/html/index.html"
+
+
+def venv_python() -> Optional[Path]:
+    if sys.platform.startswith("win"):
+        candidate = VENV_DIR / "Scripts" / "python.exe"
+    else:
+        candidate = VENV_DIR / "bin" / "python3"
+    return candidate if candidate.exists() else None
 
 # ── Data model ───────────────────────────────────────────────────────────────
 
@@ -417,8 +426,9 @@ def main() -> int:
     # ── Generate merged view ──────────────────────────────────────────────────
     merged_script = Path(__file__).parent / "generate_merged_view.py"
     if merged_script.exists():
+        python_bin = venv_python() or Path(sys.executable)
         result = subprocess.run(
-            [sys.executable, str(merged_script)],
+            [str(python_bin), str(merged_script)],
             capture_output=False,
         )
         if result.returncode != 0:

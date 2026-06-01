@@ -218,6 +218,9 @@ jobs:
       # ── Copy source files so merged view can read them ───────────────────
       # (src/ is already present — it's in the checkout)
 
+      - name: Install tree-sitter for merged view
+        run: pip install tree-sitter tree-sitter-cpp
+
       # ── Generate landing page + merged view with all 3 tool outputs ──────
       - name: Generate landing page and merged view
         run: python3 scripts/generate_landing_page.py

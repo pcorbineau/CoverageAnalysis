@@ -7,7 +7,7 @@ Checks for all required tools, reports missing ones, then optionally
 installs them — always asking the user first unless --non-interactive is given.
 
 Isolation strategy:
-  - Python tools (gcovr) → project-local venv at .coverage-venv/
+  - Python tools (gcovr, tree-sitter) → project-local venv at .coverage-venv/
   - C++ compilers        → Homebrew (macOS), apt (Linux), MSVC (Windows)
 
 Usage:
@@ -342,7 +342,35 @@ def check_gcovr(r: CheckResult) -> None:
 
     err("gcovr", "NOT FOUND in venv or on PATH")
     r.error()
-    r.need("gcovr  (pip install gcovr into .coverage-venv)", lambda: install_into_venv("gcovr"))
+    r.need(
+        "gcovr + tree-sitter  (pip install into .coverage-venv)",
+        lambda: install_into_venv("gcovr") and install_into_venv("tree-sitter") and install_into_venv("tree-sitter-cpp"),
+    )
+
+
+def check_tree_sitter(r: CheckResult) -> None:
+    if not ensure_venv():
+        r.error()
+        return
+
+    try:
+        subprocess.run(
+            [
+                str(venv_python()),
+                "-c",
+                "import tree_sitter, tree_sitter_cpp",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        ok("tree-sitter", "project venv")
+    except subprocess.CalledProcessError:
+        err("tree-sitter", "NOT FOUND in project venv")
+        r.error()
+        r.need(
+            "tree-sitter + tree-sitter-cpp  (pip install into .coverage-venv)",
+            lambda: install_into_venv("tree-sitter") and install_into_venv("tree-sitter-cpp"),
+        )
 
 
 def check_llvm(r: CheckResult) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -504,6 +532,10 @@ def main() -> int:
     print("  ── GCC / gcov ──────────────────────────────────────────")
     gcc_bin, gcov_bin = check_gcc(r)
     check_gcovr(r)
+
+    print()
+    print("  ── Python parser support ───────────────────────────────")
+    check_tree_sitter(r)
 
     print()
     print("  ── Clang / LLVM ────────────────────────────────────────")

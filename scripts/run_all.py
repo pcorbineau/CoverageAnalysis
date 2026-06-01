@@ -11,6 +11,7 @@ Available pipelines:
   gcov     — GCC + gcovr          (macOS / Linux / Windows)
   llvm     — Clang + llvm-cov     (macOS / Linux / Windows)
   opencpp  — MSVC + OpenCppCoverage (Windows only — silently skipped elsewhere)
+  microsoft — MSVC + Microsoft Code Coverage (Windows only — silently skipped elsewhere)
 
 Usage:
   python scripts/run_all.py
@@ -41,6 +42,7 @@ TOOL_COLOR = {
     "gcov":    "32",   # green
     "llvm":    "35",   # magenta
     "opencpp": "33",   # yellow
+    "microsoft": "34", # blue
 }
 
 def _c(code: str, text: str) -> str:
@@ -135,8 +137,8 @@ def main() -> int:
     parser.add_argument("--skip-prereqs", action="store_true",
                         help="Skip prerequisite check")
     parser.add_argument("--tools", nargs="+",
-                        choices=["gcov", "llvm", "opencpp"],
-                        default=["gcov", "llvm", "opencpp"],
+                        choices=["gcov", "llvm", "opencpp", "microsoft"],
+                        default=["gcov", "llvm", "opencpp", "microsoft"],
                         help="Which tool pipelines to run (default: all)")
     args = parser.parse_args()
 
@@ -163,6 +165,7 @@ def main() -> int:
         "gcov":    scripts_dir / "run_gcov.py",
         "llvm":    scripts_dir / "run_llvm_cov.py",
         "opencpp": scripts_dir / "run_opencpp_coverage.py",
+        "microsoft": scripts_dir / "run_microsoft_coverage.py",
     }
     requested = {t: tool_scripts[t] for t in args.tools}
 
@@ -218,6 +221,7 @@ def main() -> int:
         "gcov":    report_base / "gcov"    / "index.html",
         "llvm":    report_base / "llvm"    / "html" / "index.html",
         "opencpp": report_base / "opencpp" / "index.html",
+        "microsoft": report_base / "microsoft" / "index.html",
     }
 
     for tool in args.tools:
@@ -229,9 +233,14 @@ def main() -> int:
         else:
             status = _c("31", "[FAIL]")
             detail = f"exit code {rc}"
-            if tool != "opencpp" or SYSTEM == "Windows":
+            if tool not in {"opencpp", "microsoft"} or SYSTEM == "Windows":
                 final_rc = 1
-        label = {"gcov": "gcov / gcovr", "llvm": "llvm-cov", "opencpp": "OpenCppCoverage"}[tool]
+        label = {
+            "gcov": "gcov / gcovr",
+            "llvm": "llvm-cov",
+            "opencpp": "OpenCppCoverage",
+            "microsoft": "Microsoft Coverage",
+        }[tool]
         print(f"  {status}  {label:<20} {detail}")
 
     if landing.returncode == 0:

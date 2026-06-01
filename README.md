@@ -15,8 +15,6 @@ The goal is to highlight how each tool counts lines, branches, and functions dif
 
 The full analysis is available on **[GitHub Pages](https://pcorbineau.github.io/CoverageAnalysis/)**.
 
-A Markdown version is also available in [`report.md`](report.md).
-
 ## Usage
 
 Check prerequisites (and optionally install missing tools):

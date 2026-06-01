@@ -269,8 +269,8 @@ def check_gcc(r: CheckResult) -> tuple[Optional[str], Optional[str]]:
         prefix = homebrew_prefix()
         if prefix:
             bin_dir = Path(prefix) / "bin"
-            # Find highest versioned gcc-N available
-            versioned = sorted(bin_dir.glob("gcc-[0-9]*"), reverse=True)
+            # Look for g++-N (C++ compiler), not gcc-N (C compiler)
+            versioned = sorted(bin_dir.glob("g++-[0-9]*"), reverse=True)
             if versioned:
                 gcc_candidates = [versioned[0].name] + gcc_candidates
             versioned_gcov = sorted(bin_dir.glob("gcov-[0-9]*"), reverse=True)

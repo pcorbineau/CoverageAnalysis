@@ -73,7 +73,8 @@ def find_gcc() -> str:
             try:
                 prefix = subprocess.check_output([brew, "--prefix"], text=True).strip()
                 bin_dir = Path(prefix) / "bin"
-                versioned = sorted(bin_dir.glob("gcc-[0-9]*"), reverse=True)
+                # Look for g++-N (the C++ compiler), not gcc-N (the C compiler)
+                versioned = sorted(bin_dir.glob("g++-[0-9]*"), reverse=True)
                 if versioned:
                     return str(versioned[0])
             except subprocess.CalledProcessError:
@@ -123,11 +124,13 @@ def step_configure(gcc_bin: str) -> None:
         "-DCMAKE_BUILD_TYPE=Debug",
         f"-DCMAKE_CXX_COMPILER={gcc_bin}",
     ]
-    # On macOS also set the C compiler to match (avoids mixing Apple Clang)
-    if SYSTEM == "Darwin":
-        gcc_c = gcc_bin.replace("g++", "gcc").replace("c++", "cc")
-        if shutil.which(gcc_c):
-            cmd.append(f"-DCMAKE_C_COMPILER={gcc_c}")
+    # Derive C compiler from the C++ compiler name:
+    #   /opt/homebrew/bin/g++-15 → /opt/homebrew/bin/gcc-15
+    #   g++ → gcc
+    gcc_c = str(gcc_bin).replace("g++", "gcc")
+    if not (shutil.which(gcc_c) or Path(gcc_c).exists()):
+        gcc_c = "gcc"
+    cmd.append(f"-DCMAKE_C_COMPILER={gcc_c}")
     run(cmd, cwd=ROOT)
 
 def step_build() -> None:
@@ -142,14 +145,20 @@ def step_gcovr(gcovr_bin: str, gcc_bin: str) -> None:
     banner("Generate gcovr report")
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # gcovr needs to know which gcov binary matches the compiler
-    # Derive gcov from gcc-N → gcov-N (Homebrew) or plain gcov
+    # gcovr needs to know which gcov binary matches the compiler.
+    # Derive gcov binary from the C++ compiler name:
+    #   g++-15  → gcov-15
+    #   g++     → gcov
     gcov_bin = "gcov"
-    if "gcc-" in gcc_bin:
-        major = gcc_bin.rsplit("-", 1)[-1]
-        candidate = gcc_bin.replace(f"gcc-{major}", f"gcov-{major}")
-        if shutil.which(candidate) or Path(candidate).exists():
-            gcov_bin = candidate
+    bin_name = Path(gcc_bin).name  # e.g. "g++-15" or "g++"
+    if "-" in bin_name:
+        major = bin_name.rsplit("-", 1)[-1]
+        candidate_name = f"gcov-{major}"
+        candidate_path = Path(gcc_bin).parent / candidate_name
+        if candidate_path.exists():
+            gcov_bin = str(candidate_path)
+        elif shutil.which(candidate_name):
+            gcov_bin = candidate_name
 
     run([
         gcovr_bin,

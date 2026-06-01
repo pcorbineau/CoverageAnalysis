@@ -56,7 +56,7 @@ OPENCPP_XML = REPORTS / "opencpp" / "coverage.xml"
 _ALL_TOOLS = ["gcov", "llvm", "opencpp"]
 
 TOOL_LABEL = {"gcov": "GCC", "llvm": "LLVM", "opencpp": "MSVC"}
-TOOL_TAG = {"gcov": "gcov", "llvm": "llvm-cov", "opencpp": "occ"}
+TOOL_TAG = {"gcov": "gcov", "llvm": "llvm-cov", "opencpp": "opencpp"}
 
 TOOL_COLOR = {"gcov": "#A7AAFF", "llvm": "#54DFCB", "opencpp": "#FEDF43"}
 TOOL_MISS_BG = {"gcov": "#EDEEFF", "llvm": "#DDFAF5", "opencpp": "#FFFCD9"}
@@ -817,7 +817,7 @@ body {
 }
 .th-tag-gcov,    .tag-cell-gcov    { width: 56px;  border-right: none; }
 .th-tag-llvm,    .tag-cell-llvm    { width: 74px;  border-right: none; }
-.th-tag-opencpp, .tag-cell-opencpp { width: 50px;  border-right: 1px solid #E5E5EA; }
+.th-tag-opencpp, .tag-cell-opencpp { width: 92px;  border-right: 1px solid #E5E5EA; }
 .tag-cell-merged { vertical-align: top; padding-top: .08rem !important; }
 
 /* ── Table rows ── */
@@ -906,7 +906,7 @@ function showFile(id) {
 
 
 def _tool_col_css(tools: list[str]) -> str:
-    widths = {"gcov": 56, "llvm": 74, "opencpp": 50}
+    widths = {"gcov": 56, "llvm": 74, "opencpp": 92}
     rules = []
     for i, tool in enumerate(tools):
         width = widths.get(tool, 60)

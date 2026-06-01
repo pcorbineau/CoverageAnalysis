@@ -193,16 +193,28 @@ def pct_cell(value: Optional[float]) -> str:
     )
 
 
-def count_cell(value: Optional[int], total: Optional[int]) -> str:
-    if value is None or total is None:
+def count_cell(value: Optional[int], tool_total: Optional[int], theoretical_total: Optional[int]) -> str:
+    if value is None or tool_total is None:
         return '<td class="na">N/A</td>'
-    return f'<td style="text-align:center;font-variant-numeric:tabular-nums;">{value}/{total}</td>'
+    _ = theoretical_total
+    return f'<td class="count-cell"><div class="count-main">{value}/{tool_total} lines</div></td>'
 
 
-def theoretical_cell(total: Optional[int]) -> str:
-    if total is None:
-        return '<td class="na">N/A</td>'
-    return f'<td style="text-align:center;font-variant-numeric:tabular-nums;font-weight:600;">{total}</td>'
+def total_row(theoretical_total: Optional[int]) -> str:
+    if theoretical_total is None:
+        value = '<span class="na">N/A</span>'
+    else:
+        value = str(theoretical_total)
+    return (
+        '<tr class="comparison-total-row">'
+        '<td class="comparison-total-cell" colspan="5">'
+        '<div class="comparison-total-wrap">'
+        '<span class="comparison-total-label">Theoretical Total</span>'
+        f'<span class="comparison-total-value">{value} lines</span>'
+        '</div>'
+        '</td>'
+        '</tr>'
+    )
 
 
 def normalise(path: str) -> str:
@@ -271,8 +283,7 @@ def tool_row(r: ToolResult, theoretical_total: Optional[int]) -> str:
     return (
         "<tr>"
         + name_cell
-        + count_cell(r.line_covered, r.line_total)
-        + theoretical_cell(theoretical_total)
+        + count_cell(r.line_covered, r.line_total, theoretical_total)
         + pct_cell(r.line_pct)
         + pct_cell(r.branch_pct)
         + pct_cell(r.function_pct)
@@ -355,7 +366,7 @@ HTML_TEMPLATE = """\
     /* ── Comparison table ── */
     .comparison {{
       width: 100%;
-      max-width: 980px;
+      max-width: 900px;
       border-collapse: collapse;
       margin-bottom: 2.5rem;
       background: #FFFFFF;
@@ -383,6 +394,23 @@ HTML_TEMPLATE = """\
     .comparison a {{ color: #0071E3; text-decoration: none; }}
     .comparison a:hover {{ text-decoration: underline; }}
     td.na {{ color: #AEAEB2; font-style: italic; text-align: center; }}
+    .count-cell {{ text-align: center; font-variant-numeric: tabular-nums; }}
+    .count-main {{ font-weight: 600; }}
+    .comparison tfoot td {{ border-bottom: none; }}
+    .comparison-total-cell {{
+      padding: 0 !important;
+      border-top: 1px solid #E5E5EA;
+      background: #FAFAFC;
+    }}
+    .comparison-total-wrap {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .8rem 1rem;
+      font-size: .9rem;
+    }}
+    .comparison-total-label {{ color: #6E6E73; font-weight: 600; }}
+    .comparison-total-value {{ font-variant-numeric: tabular-nums; font-weight: 700; }}
     /* ── Tool cards ── */
     .cards {{
       display: flex;
@@ -466,8 +494,7 @@ HTML_TEMPLATE = """\
     <thead>
       <tr>
         <th>Tool</th>
-        <th>Covered / Tool Total</th>
-        <th>Theoretical Lines</th>
+        <th>Covered / Uncovered + Covered</th>
         <th>Line %</th>
         <th>Branch %</th>
         <th>Function %</th>
@@ -476,6 +503,9 @@ HTML_TEMPLATE = """\
     <tbody>
 {rows}
     </tbody>
+    <tfoot>
+{total_row}
+    </tfoot>
   </table>
 
   <div class="cards">
@@ -530,6 +560,7 @@ def main() -> int:
     theory_total = theoretical_line_total()
 
     rows  = "\n".join(f"    {tool_row(r, theory_total)}" for r in available)
+    total_row_html = f"    {total_row(theory_total)}"
     cards = "\n".join(tool_card(r) for r in available)
 
     tool_list = " &bull; ".join(r.name for r in available)
@@ -538,6 +569,7 @@ def main() -> int:
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
         tool_list=tool_list,
         rows=rows,
+        total_row=total_row_html,
         cards=cards,
     )
 

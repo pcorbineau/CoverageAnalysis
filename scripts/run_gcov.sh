@@ -30,8 +30,6 @@ gcovr \
     --object-directory build-gcc \
     --exclude "tests/.*" \
     --exclude ".*catch.*" \
-    --exclude-throw-branches \
-    --exclude-noncode-lines \
     --html-details coverage-reports/gcov/index.html \
     --txt          coverage-reports/gcov/summary.txt \
     --json-summary coverage-reports/gcov/summary.json \
